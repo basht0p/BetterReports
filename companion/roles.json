@@ -1,0 +1,14 @@
+{
+  "betterreports_user": {
+    "cluster_permissions": ["cluster:admin/betterreports/authorize", "cluster:admin/betterreports/check", "cluster:admin/betterreports/list", "cluster:admin/betterreports/revoke"],
+    "index_permissions": [], "tenant_permissions": []
+  },
+  "betterreports_tenant_manager": {
+    "cluster_permissions": ["cluster:admin/betterreports/list", "cluster:admin/betterreports/revoke"],
+    "index_permissions": [], "tenant_permissions": []
+  },
+  "betterreports_worker": {
+    "cluster_permissions": ["cluster:admin/betterreports/execute", "cluster:admin/betterreports/check", "cluster:admin/betterreports/release"],
+    "index_permissions": [], "tenant_permissions": []
+  }
+}

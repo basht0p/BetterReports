@@ -1,0 +1,9 @@
+{
+  "compilerOptions": {
+    "target": "ES2022", "module": "commonjs", "moduleResolution": "node",
+    "lib": ["ES2022", "DOM"], "jsx": "react", "esModuleInterop": true,
+    "strict": true, "skipLibCheck": true, "resolveJsonModule": true,
+    "noEmit": true
+  },
+  "include": ["common", "server", "public", "tests", "scripts/*.ts", "types"]
+}

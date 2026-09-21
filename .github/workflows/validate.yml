@@ -1,0 +1,25 @@
+name: Validate BetterReports
+on: [push, pull_request]
+jobs:
+  plugin:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - run: npm run build:companion
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BetterReports-3.8.0
+          path: |
+            build/betterReports-3.8.0.zip
+            build/betterReports-3.8.0.zip.sha256
+
+            build/betterreports-opensearch-3.8.0.zip
+            build/betterreports-opensearch-3.8.0.zip.sha256

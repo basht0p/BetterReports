@@ -1,0 +1,10 @@
+{
+  "id": "betterReports",
+  "version": "0.0.1",
+  "opensearchDashboardsVersion": "3.8.0",
+  "server": true,
+  "ui": true,
+  "requiredPlugins": ["data", "securityDashboards"],
+  "optionalPlugins": ["share"],
+  "configPath": ["better_reports"]
+}

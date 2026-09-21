@@ -1,0 +1,8 @@
+*
+!build/
+build/*
+!build/betterReports-3.8.0.zip
+!build/betterreports-opensearch-3.8.0.zip
+!dev/
+dev/*
+!dev/dashboard.Dockerfile

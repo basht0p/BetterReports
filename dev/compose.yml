@@ -1,0 +1,42 @@
+name: betterreports-dev
+services:
+  opensearch:
+    build:
+      context: ..
+      dockerfile: dev/opensearch.Dockerfile
+    environment:
+      discovery.type: single-node
+      OPENSEARCH_JAVA_OPTS: -Xms512m -Xmx512m
+      OPENSEARCH_INITIAL_ADMIN_PASSWORD: ${BR_ADMIN_PASSWORD}
+      plugins.security.system_indices.enabled: 'true'
+    ports:
+      - 127.0.0.1:19200:9200
+  dashboards: &dashboards
+    build:
+      context: ..
+      dockerfile: dev/dashboard.Dockerfile
+    environment:
+      BETTER_REPORTS_WORKER_PASSWORD: ${BR_RUNNER_PASSWORD}
+      NODE_EXTRA_CA_CERTS: /fixtures/certs/server.crt
+    volumes:
+      - ./opensearch_dashboards.yml:/usr/share/opensearch-dashboards/config/opensearch_dashboards.yml:ro
+      - ../.platform/dev-certs:/fixtures/certs:ro
+    ports:
+      - 127.0.0.1:15601:5601
+    depends_on:
+      - opensearch
+      - smtp
+  smtp:
+    image: opensearchproject/opensearch-dashboards:3.8.0
+    entrypoint: [/usr/share/opensearch-dashboards/node/bin/node, /fixtures/smtp.mjs]
+    volumes:
+      - ./smtp.mjs:/fixtures/smtp.mjs:ro
+      - ../.platform/dev-certs:/fixtures/certs:ro
+    ports:
+      - 127.0.0.1:18081:8081
+
+  dashboards-secondary:
+    <<: *dashboards
+    profiles: [multi]
+    ports:
+      - 127.0.0.1:15602:5601

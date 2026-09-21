@@ -1,0 +1,20 @@
+server.host: 0.0.0.0
+server.basePath: /br
+server.rewriteBasePath: true
+opensearch.hosts: [https://opensearch:9200]
+# Disposable demo cluster only; production must validate cluster certificates.
+opensearch.ssl.verificationMode: none
+opensearch.username: kibanaserver
+opensearch.password: kibanaserver
+opensearch.requestHeadersWhitelist: [authorization, securitytenant]
+opensearch_security.multitenancy.enabled: true
+opensearch_security.multitenancy.enable_aggregation_view: false
+opensearch_security.cookie.secure: false
+better_reports:
+  worker:
+    username: betterreports_runner
+  smtp:
+    host: smtp
+    port: 2525
+    secure: false
+    from: reports@example.test
