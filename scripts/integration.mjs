@@ -10,7 +10,7 @@ function request(service, path, method = 'GET', body, username = 'admin', tenant
   const password = ({ admin: secrets.admin, report_owner: secrets.owner, report_other: secrets.other })[username];
   return new Promise((resolve, reject) => {
     const client = service === 'os' ? https : http;
-    const req = client.request({ hostname: '127.0.0.1', port: service === 'os' ? 19200 : service === 'osd2' ? 15602 : 15601, path: service === 'os' ? path : `/br${path}`, method, rejectUnauthorized: false, timeout: 30000,
+    const req = client.request({ hostname: '127.0.0.1', port: service === 'os' ? 19400 : service === 'osd2' ? 15602 : 15601, path: service === 'os' ? path : `/br${path}`, method, rejectUnauthorized: false, timeout: 30000,
       headers: { authorization: `Basic ${Buffer.from(`${username}:${password}`).toString('base64')}`, securitytenant: tenant, 'osd-xsrf': 'integration', 'content-type': 'application/json' } }, res => {
       const chunks = []; res.on('data', chunk => chunks.push(chunk)); res.on('end', () => { const text = Buffer.concat(chunks).toString(); let data; try { data = JSON.parse(text); } catch { data = text.slice(0, 1000); } if (res.statusCode >= 400) reject(Object.assign(new Error(`${service} ${method} ${path}: ${res.statusCode} ${JSON.stringify(data)}`), { status: res.statusCode })); else resolve(data); });
     }); req.on('error', reject); req.on('timeout', () => req.destroy(new Error('Request timeout'))); if (body !== undefined) req.write(JSON.stringify(body)); req.end();
@@ -27,9 +27,9 @@ await put('rolesmapping/betterreports_storage', { users: ['kibanaserver'] });
 await put('roles/betterreports_fixture', { cluster_permissions: ['cluster_composite_ops'], index_permissions: [{ index_patterns: ['br-fixture-*'], allowed_actions: ['read'], dls: JSON.stringify({ term: { environment: 'production' } }) }], tenant_permissions: [{ tenant_patterns: ['operations', 'finance'], allowed_actions: ['kibana_all_write'] }] });
 for (const [name, password] of [['report_owner', secrets.owner], ['report_other', secrets.other], ['betterreports_runner', secrets.runner]]) await put(`internalusers/${name}`, { password, backend_roles: [] });
 await put('rolesmapping/betterreports_fixture', { users: ['report_owner', 'report_other'] });
-await put('roles/betterreports_user', { cluster_permissions: ['cluster:admin/betterreports/authorize','cluster:admin/betterreports/list','cluster:admin/betterreports/revoke','cluster:admin/betterreports/check'], index_permissions: [], tenant_permissions: [] });
+await put('roles/betterreports_user', JSON.parse(await readFile('companion/roles.json', 'utf8')).betterreports_user);
 await put('rolesmapping/betterreports_user', { users: ['report_owner','report_other'] });
-await put('roles/betterreports_worker', { cluster_permissions: ['cluster:admin/betterreports/execute','cluster:admin/betterreports/check','cluster:admin/betterreports/release'], index_permissions: [], tenant_permissions: [] });
+await put('roles/betterreports_worker', JSON.parse(await readFile('companion/roles.json', 'utf8')).betterreports_worker);
 await put('rolesmapping/betterreports_worker', { users: ['betterreports_runner'] });
 // Dashboards may have attempted storage initialization before roles existed.
 const { spawnSync } = await import('node:child_process');
@@ -98,7 +98,10 @@ let distributedWorkers = [];
 if (process.argv.includes('--multi')) { const queued = await Promise.all(Array.from({ length: 8 }, () => api('/preview', 'POST', allTypes))); const complete = await Promise.all(queued.map(completeRun)); distributedWorkers = [...new Set(complete.map(run => run.worker))]; assert.equal(distributedWorkers.length, 2, 'Both instances should execute shared jobs'); }
 const baselineMailCount = (await (await fetch('http://127.0.0.1:18081')).json()).count;
 const latestForGrant = await api(`/reports/${report.id}`); await api(`/reports/${report.id}/authorize`, "POST", { revision: latestForGrant.revision });
-const schedule = await api('/schedules', 'POST', { reportId: report.id, cron: '* * * * *', timezone: 'UTC', enabled: true, recipients: ['fixture@example.test'], subject: 'BetterReports integration', message: 'Synthetic test report' });
+const sender = await request('os', '/_plugins/_notifications/configs', 'POST', { config: { name: 'BetterReports fixture sender', config_type: 'smtp_account', is_enabled: true, smtp_account: { host: 'smtp', port: 2525, method: 'none', from_address: 'reports@example.test' } } }, 'report_owner');
+const group = await request('os', '/_plugins/_notifications/configs', 'POST', { config: { name: 'BetterReports fixture recipients', config_type: 'email_group', is_enabled: true, email_group: { recipient_list: [{ recipient: 'fixture@example.test' }] } } }, 'report_owner');
+const notificationOptions = await api('/notification-options'); assert.ok(notificationOptions.senders.some(option => option.id === sender.config_id)); assert.ok(notificationOptions.groups.some(option => option.id === group.config_id));
+const schedule = await api('/schedules', 'POST', { reportId: report.id, cron: '* * * * *', timezone: 'UTC', enabled: true, senderId: sender.config_id, recipientGroupIds: [group.config_id], subject: 'BetterReports integration', message: 'Synthetic test report' });
 const mail = await wait('Browser-independent scheduled email', async () => {
   const response = await fetch('http://127.0.0.1:18081'); const data = await response.json(); return data.count > baselineMailCount ? data : false;
 }, 180);
@@ -113,5 +116,5 @@ await assert.rejects(request('os', '/.better-reports-v1-artifacts/_search', 'POS
 await put('rolesmapping/betterreports_fixture', { users: ['report_other'] });
 try { await assert.rejects(api(`/runs/${finished.id}/pdf?encoding=base64`), error => error.status === 403); }
 finally { await put('rolesmapping/betterreports_fixture', { users: ['report_owner', 'report_other'] }); }
-await writeFile('output/integration/results.json', JSON.stringify({ platform: '3.8.0', distributedWorkers, reportId: report.id, runId: finished.id, pagesExpected: 1, sha256: artifact.sha256, scheduledEmails: mail.count - baselineMailCount, allTypesRunId: allRun.id, dlsCount: 12, pinnedFreshCount: 13, refreshedSum: 7800, checkedAt: new Date().toISOString() }, null, 2));
-console.log('PASS: 3.8.0 installation, source import, PDF generation, owner/tenant isolation, artifact authorization, and scheduled STARTTLS PDF email. Evidence: output/integration/.');
+await writeFile('output/integration/results.json', JSON.stringify({ platform: '3.8.0', senderId: sender.config_id, recipientGroupIds: [group.config_id], distributedWorkers, reportId: report.id, runId: finished.id, pagesExpected: 1, sha256: artifact.sha256, scheduledEmails: mail.count - baselineMailCount, allTypesRunId: allRun.id, dlsCount: 12, pinnedFreshCount: 13, refreshedSum: 7800, checkedAt: new Date().toISOString() }, null, 2));
+console.log('PASS: 3.8.0 installation, source import, PDF generation, owner/tenant isolation, artifact authorization, and scheduled Notifications PDF email. Evidence: output/integration/.');

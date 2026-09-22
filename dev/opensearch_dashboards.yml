@@ -13,8 +13,3 @@ opensearch_security.cookie.secure: false
 better_reports:
   worker:
     username: betterreports_runner
-  smtp:
-    host: smtp
-    port: 2525
-    secure: false
-    from: reports@example.test

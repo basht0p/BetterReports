@@ -37,6 +37,6 @@ export function PdfPreview({ bytes, workerUrl, filename, stale }: { bytes?: Uint
     {stale && bytes && <div className="br-warning">This preview reflects an earlier revision. Generate a new preview to include your changes.</div>}
     {error && <div role="alert" className="br-error">{error}</div>}
     {document && <div className="br-pagination"><button disabled={page <= 1} onClick={() => setPage(page - 1)}>Previous</button><span>Page {page} of {document.numPages}</span><button disabled={page >= document.numPages} onClick={() => setPage(page + 1)}>Next</button><label>Zoom <select value={zoom} onChange={e => setZoom(Number(e.target.value))}><option value={0.5}>50%</option><option value={0.75}>75%</option><option value={1}>100%</option><option value={1.5}>150%</option></select></label></div>}
-    <div className="br-paper-area">{bytes ? <canvas ref={canvas} aria-label={`PDF page ${page}`} /> : <div className="br-empty"><div className="br-paper-icon">Aa</div><h2>Your report, ready for the page.</h2><p>Add report sections and generate a preview.<br />Charts stay sharp. Text stays selectable.</p></div>}</div>
+    <div className="br-paper-area">{bytes ? <canvas ref={canvas} aria-label={`PDF page ${page}`} /> : <div className="br-empty"><div className="br-paper-icon">Aa</div><h2>Your report, ready for the page.</h2><p>Add report sections and generate a preview.</p></div>}</div>
   </section>;
 }

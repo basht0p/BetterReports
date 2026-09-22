@@ -16,7 +16,7 @@ for (const port of [15601, 15602]) { let ready = false; for (let i = 0; i < 90; 
 const existing = await api('/schedules'); assert.equal(existing.filter(s => s.enabled).length, 0, 'Pause fixture schedules before the benchmark');
 const now = new Date(), target = new Date(Math.ceil((now.getTime() + 30000) / 60000) * 60000);
 const cron = `${target.getUTCMinutes()} ${target.getUTCHours()} ${target.getUTCDate()} ${target.getUTCMonth() + 1} *`;
-const input = { reportId: fixture.reportId, cron, timezone: 'UTC', enabled: true, recipients: ['load-fixture@example.test'], subject: 'BetterReports workload fixture', message: 'Synthetic data' };
+const input = { reportId: fixture.reportId, cron, timezone: 'UTC', enabled: true, senderId: fixture.senderId, recipientGroupIds: fixture.recipientGroupIds, subject: 'BetterReports workload fixture', message: 'Synthetic data' };
 const mailBaseline = (await (await fetch('http://127.0.0.1:18081')).json()).count;
 const schedules = [], peak = [0, 0]; const started = Date.now();
 try {

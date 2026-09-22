@@ -26,11 +26,14 @@ node scripts/dev-up.mjs --multi
 node scripts/integration.mjs --multi
 node scripts/fls-test.mjs
 node scripts/load-test.mjs
+node scripts/notifications-integration.mjs
 ```
 
 ## Release acceptance
 
-The implementation has been exercised in the official 3.8.0 images with Security and the normal Reporting plugin installed: all supported visualization/aggregation types, DLS/FLS, tenant and owner isolation, revoked access, source refresh versus fresh data, actual PDF.js preview, SMTP STARTTLS, two-instance execution, and 100 scheduled PDFs. Machine-readable results are generated under `output/integration/`. Unit tests cover DST transitions, leases, cancellation, retry dates, ambiguous SMTP, and graceful shutdown recovery.
+Release 0.0.2 was exercised in the official 3.8.0 images with Security, Notifications, and the normal Reporting plugin installed. Its 28 unit tests and type/source-contract checks passed. Live checks covered supported visualization/aggregation types, tenant/owner isolation, revoked access, source refresh versus fresh data, Notifications PDF attachments, current group membership, disabled-sender rejection, temporary-channel cleanup, and delivery after a signed SAML session expired. Two Dashboards instances completed and delivered 100 scheduled PDFs with 100 distinct emails and peak concurrency of two per instance (about 285 seconds overall; scheduled-to-completion p95 about 225 seconds in the disposable fixture). Machine-readable results are generated under `output/integration/`.
+
+Browser checks cover the secondary sidebar, relative date editor, searchable timezone choices, keyboard section reordering, Reports navigation from the editor, Cancel, and in-page delete confirmation without a JavaScript dialog. The Notifications fixture uses a local mail sink and does not contact real recipients. Verify your deployment's sender credentials and TLS using Notifications before enabling production schedules.
 
 Before production rollout, also verify these scenarios with representative deployment data:
 

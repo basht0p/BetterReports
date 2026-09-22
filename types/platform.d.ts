@@ -7,5 +7,14 @@ declare module '@elastic/eui' {
   export const EuiButtonEmpty: React.ComponentType<any>;
   export const EuiCallOut: React.ComponentType<any>;
   export const EuiPanel: React.ComponentType<any>;
+  export const EuiSideNav: React.ComponentType<any>;
+  export const EuiSuperDatePicker: React.ComponentType<any>;
+  export const EuiFormRow: React.ComponentType<any>;
+  export const EuiComboBox: React.ComponentType<any>;
+  export const EuiDragDropContext: React.ComponentType<any>;
+  export const EuiDroppable: React.ComponentType<any>;
+  export const EuiDraggable: React.ComponentType<any>;
+  export const EuiIcon: React.ComponentType<any>;
+  export const EuiConfirmModal: React.ComponentType<any>;
   export const EuiTitle: React.ComponentType<any>;
 }

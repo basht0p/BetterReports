@@ -109,9 +109,11 @@ export function registerRoutes(router: any, ready: () => Promise<Services>, log:
     const { localKey } = await import('./time');
     for (let i = 0; i < 5; i++) { date = nextOccurrence(input.cron, input.timezone, date, key); key = localKey(date, input.timezone); dates.push(date.toISOString()); } return dates;
   });
+  add('get', '/notification-options', (s, r) => s.platform.grants.call('notifications', {}, r));
   add('get', '/schedules', (s, _r, actor) => ownedList(s, 'schedules', actor));
   for (const method of ['post', 'put']) add(method, method === 'post' ? '/schedules' : '/schedules/{id}', async (s, r, actor) => {
     const input = scheduleSchema.parse(method === 'post' ? r.body : r.body.schedule); validateCron(input.cron, input.timezone);
+    await s.platform.grants.call('notifications', { senderId: input.senderId, recipientGroupIds: input.recipientGroupIds }, r);
     const report = await ownerRecord<Report>(s, 'reports', input.reportId, actor);
     if (input.enabled) await s.platform.grants.check(report.value);
     const current = method === 'put' ? await ownerRecord<Schedule>(s, 'schedules', r.params.id, actor) : undefined;
@@ -127,7 +129,7 @@ export function registerRoutes(router: any, ready: () => Promise<Services>, log:
   add('post', '/schedules/{id}/run', async (s, r, actor) => {
     const schedule = (await ownerRecord<Schedule>(s, 'schedules', r.params.id, actor)).value;
     const report = (await ownerRecord<Report>(s, 'reports', schedule.reportId, actor)).value;
-    await s.platform.authorize(report, r); await s.platform.grants.check(report); const runId = await s.runner.enqueue(report, 'test', new Date(), { recipients: schedule.recipients, subject: schedule.subject, message: schedule.message }, undefined, r); void s.runner.tick(); return { runId };
+    await s.platform.authorize(report, r); await s.platform.grants.check(report); const runId = await s.runner.enqueue(report, 'test', new Date(), { senderId: schedule.senderId, recipientGroupIds: schedule.recipientGroupIds, subject: schedule.subject, message: schedule.message }, undefined, r); void s.runner.tick(); return { runId };
   });
   add('get', '/health', async s => ({ ...s.runner.health, limits: s.runner.limits }), { admin: true });
   add('get', '/admin/schedules', async s => (await s.store.list<Schedule>('schedules')).map(({ value: { id, owner, tenant, enabled, nextAt, skipped, revision } }) => ({ id, owner, tenant, enabled, nextAt, skipped, revision })), { admin: true });

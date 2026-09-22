@@ -12,7 +12,9 @@ pdfmake and PDFKit: MIT.
 Roboto font files included through pdfmake: Apache-2.0.
 PDF.js: Apache-2.0.
 pdf-lib, Luxon, Zod, and cron-parser: MIT.
-Nodemailer: MIT-0 (see its packaged license).
+OpenSearch common-utils Notifications SDK: Apache-2.0, OpenSearch Contributors.
+Kotlin standard library: Apache-2.0, JetBrains and contributors.
+The companion includes these SDK JARs, which retain their own license metadata.
 
 No OpenSearch source checkout or development credentials are included
 in the plugin archive.
