@@ -8,7 +8,7 @@ import archiver from 'archiver';
 const root = process.cwd(), stage = resolve(root, 'build/opensearch-dashboards/betterReports');
 await mkdir(stage, { recursive: true });
 async function entries(dir) { const items = await readdir(dir, { withFileTypes: true }); return (await Promise.all(items.map(item => item.isDirectory() ? entries(join(dir, item.name)) : /\.ts$/.test(item.name) ? [join(dir, item.name)] : []))).flat(); }
-await build({ entryPoints: [...await entries(join(root, 'server')), ...await entries(join(root, 'common'))], outbase: root, outdir: stage, platform: 'node', target: 'node22', format: 'cjs', sourcemap: true, bundle: false });
+await build({ entryPoints: [...await entries(join(root, 'server')), ...await entries(join(root, 'common'))], outbase: root, outdir: stage, platform: 'node', target: 'node22', format: 'cjs', bundle: false });
 const shared = { react: 'React', 'react-dom': 'ReactDom', '@elastic/eui': 'ElasticEui' };
 await build({ entryPoints: ['public/index.ts'], outfile: join(stage, 'target/public/betterReports.plugin.js'), bundle: true, platform: 'browser', target: 'es2022', format: 'iife', globalName: 'BetterReportsBundle', minify: true,
   plugins: [{ name: 'opensearch-shared-dependencies', setup(builder) {
