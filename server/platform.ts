@@ -8,6 +8,27 @@ export function assertTenantAccess(authInfo: any, tenant: string) {
   if (!Object.prototype.hasOwnProperty.call(authInfo.tenants ?? {}, name)) throw new ReportError('TENANT_FORBIDDEN', 'The owner no longer has access to this tenant.', 403);
 }
 
+// Dashboards 3.8.0 may spread a serialized query:queryString:options value
+// into numbered character keys. Restore the options object before sending DSL.
+export function normalizeQueryStringOptions(node: any, depth = 0): void {
+  if (!node || typeof node !== 'object' || depth > 30) return;
+  if (Array.isArray(node)) { node.forEach(value => normalizeQueryStringOptions(value, depth + 1)); return; }
+  if (node.query_string && typeof node.query_string === 'object') {
+    const query = node.query_string;
+    const digits = Object.keys(query).filter(key => /^\d+$/.test(key)).sort((a, b) => Number(a) - Number(b));
+    if (digits.length) {
+      const serialized = digits.map(key => query[key]).join('');
+      let options: any;
+      try { options = JSON.parse(serialized); }
+      catch { throw new ReportError('INVALID_QUERY', 'Dashboards Lucene query options contain invalid JSON.'); }
+      if (!options || typeof options !== 'object' || Array.isArray(options)) throw new ReportError('INVALID_QUERY', 'Dashboards Lucene query options must be an object.');
+      digits.forEach(key => delete query[key]);
+      Object.assign(query, options);
+    }
+  }
+  Object.values(node).forEach(value => normalizeQueryStringOptions(value, depth + 1));
+}
+
 // All platform-specific calls live here. Contract paths are verified by
 // npm run check:platform against upstream tag 3.8.0 (aa72a981).
 export class PlatformAdapter {
@@ -105,6 +126,7 @@ export class PlatformAdapter {
     search.setField('filter', filters); search.setField('aggs', () => aggs.toDsl(false)); search.setField('size', 0);
     await aggs.onSearchRequestStart(search, { abortSignal: signal });
     const body = await search.getSearchRequestBody();
+    normalizeQueryStringOptions(body);
     body.track_total_hits = true; body.timeout = `${Math.max(1, Math.floor(this.limits.timeoutMs / 1000) - 5)}s`;
     collecting!.panels.push({ index: pattern.title, body: { query: body.query, aggs: body.aggs, size: 0 }, timeField: pattern.timeFieldName ?? '' });
     search.destroy(); return {} as PanelData;

@@ -6,6 +6,7 @@ import { SourceService, validateSnapshot } from '../server/sources';
 import { chartOption, renderPdf } from '../server/render';
 import { countryName, geohashCenter } from '../server/geo';
 import { parseTimeline } from '../server/timeline';
+import { normalizeQueryStringOptions } from '../server/platform';
 import { run, snapshot } from './fixtures';
 
 const metric: PanelData = { key: 'x', title: 'Value', type: 'gauge', params: { gauge: { ranges: [{ from: 0, to: 100, color: '#0d9488' }] } }, columns: ['Count'], bucketCount: 0, schemas: ['metric'], rows: [[{ value: 42, text: '42' }]] };
@@ -83,4 +84,11 @@ test('source discovery still works when the optional Maps plugin is absent', asy
     return { total: 1, saved_objects: [{ id: 'v', type: 'visualization', attributes: { title: 'Line' } }] };
   } });
   assert.deepEqual((await service.discover('')).sources, [{ id: 'v', type: 'visualization', title: 'Line' }]);
+});
+
+test('normalizes serialized Lucene options emitted by Dashboards 3.8.0', () => {
+  const serialized = '{"analyze_wildcard":true}';
+  const query: any = { bool: { must: [{ query_string: { ...Object.fromEntries([...serialized].map((letter, index) => [index, letter])), query: 'environment:production', time_zone: 'UTC' } }] } };
+  normalizeQueryStringOptions(query);
+  assert.deepEqual(query.bool.must[0].query_string, { query: 'environment:production', time_zone: 'UTC', analyze_wildcard: true });
 });

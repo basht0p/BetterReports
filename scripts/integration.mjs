@@ -19,6 +19,18 @@ function request(service, path, method = 'GET', body, username = 'admin', tenant
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function wait(label, fn, seconds = 180) { let last; const deadline = Date.now() + seconds * 1000; while (Date.now() < deadline) { try { const result = await fn(); if (result) return result; } catch (error) { if (error.fatal) throw error; last = error; } await delay(2000); } throw new Error(`${label} timed out: ${last?.message ?? ''}`); }
 await wait('OpenSearch', () => request('os', '/'));
+if (process.argv.includes('--timeline-only')) {
+  await wait('Dashboards', () => request('osd', '/api/better_reports/health'));
+  const imported = await request('osd', '/api/better_reports/sources/import', 'POST', { type: 'visualization', id: 'br-fixture-timeline' }, 'report_owner');
+  const source = imported[0].source;
+  const body = { title: 'Timeline debug', timezone: 'UTC', timeRange: { from: '2026-09-19T00:00:00Z', to: '2026-09-21T00:00:00Z' }, query: { language: 'kuery', query: '' }, filters: [], branding: { organization: 'Fixture', header: '', footer: '', color: '#2457a7', alignment: 'left', showPeriod: true, showGenerated: true, showPageNumbers: true }, sources: [source], sections: [{ id: 'timeline', kind: 'panels', columns: 1, sources: [source.key] }] };
+  const queued = await request('osd', '/api/better_reports/preview', 'POST', body, 'report_owner');
+  const finished = await wait('Timeline preview', async () => { const run = await request('osd', `/api/better_reports/runs/${queued.runId}`, 'GET', undefined, 'report_owner'); if (run.status === 'failed') throw Object.assign(new Error(JSON.stringify(run.error)), { fatal: true }); return run.status === 'complete' ? run : false; });
+  const artifact = await request('osd', `/api/better_reports/runs/${finished.id}/pdf?encoding=base64`, 'GET', undefined, 'report_owner');
+  assert.equal(Buffer.from(artifact.pdf, 'base64').subarray(0, 4).toString(), '%PDF');
+  console.log('PASS: saved Timeline expression produced a PDF.');
+  process.exit(0);
+}
 const put = (path, body) => request('os', `/_plugins/_security/api/${path}`, 'PUT', body);
 await put('tenants/operations', { description: 'BetterReports disposable fixture' });
 await put('tenants/finance', { description: 'BetterReports second tenant fixture' });
@@ -38,9 +50,10 @@ assert.equal(restarted.status, 0);
 await wait('Dashboards', () => request('osd', '/api/better_reports/health'), 240);
 if (process.argv.includes('--multi')) await wait('Secondary Dashboards', () => request('osd2', '/api/better_reports/health'), 240);
 await request('os', '/br-fixture-data', 'PUT', { mappings: { properties: { '@timestamp': { type: 'date' }, environment: { type: 'keyword' }, bytes: { type: 'long' } } } }).catch(error => { if (!error.message.includes('resource_already_exists_exception')) throw error; });
-for (let i = 0; i < 20; i++) await request('os', `/br-fixture-data/_doc/${i}?refresh=true`, 'PUT', { '@timestamp': '2026-09-20T12:00:00Z', environment: i < 12 ? 'production' : 'development', bytes: i * 100 });
+await request('os', '/br-fixture-data/_mapping', 'PUT', { properties: { country: { type: 'keyword' }, point: { type: 'geo_point' } } });
+for (let i = 0; i < 20; i++) await request('os', `/br-fixture-data/_doc/${i}?refresh=true`, 'PUT', { '@timestamp': '2026-09-20T12:00:00Z', environment: i < 12 ? 'production' : 'development', bytes: i * 100, country: 'US', point: { lat: 40 + i / 10, lon: -74 } });
 const so = (type, id, body) => request('osd', `/api/saved_objects/${type}/${id}?overwrite=true`, 'POST', body, 'report_owner');
-await so('index-pattern', 'br-fixture-index', { attributes: { title: 'br-fixture-*', timeFieldName: '@timestamp', fields: JSON.stringify([{ name: '@timestamp', type: 'date', searchable: true, aggregatable: true }, { name: 'bytes', type: 'number', searchable: true, aggregatable: true }, { name: 'environment', type: 'string', searchable: true, aggregatable: true }]) } });
+await so('index-pattern', 'br-fixture-index', { attributes: { title: 'br-fixture-*', timeFieldName: '@timestamp', fields: JSON.stringify([{ name: '@timestamp', type: 'date', searchable: true, aggregatable: true }, { name: 'bytes', type: 'number', searchable: true, aggregatable: true }, { name: 'environment', type: 'string', searchable: true, aggregatable: true }, { name: 'country', type: 'string', searchable: true, aggregatable: true }, { name: 'point', type: 'geo_point', searchable: true, aggregatable: true }]) } });
 await so('visualization', 'br-fixture-metric', { attributes: { title: 'Production requests', visState: JSON.stringify({ type: 'metric', params: {}, aggs: [{ id: '1', enabled: true, type: 'count', schema: 'metric', params: {} }] }), kibanaSavedObjectMeta: { searchSourceJSON: JSON.stringify({ indexRefName: 'kibanaSavedObjectMeta.searchSourceJSON.index', query: { language: 'kuery', query: '' }, filter: [] }) } }, references: [{ type: 'index-pattern', id: 'br-fixture-index', name: 'kibanaSavedObjectMeta.searchSourceJSON.index' }] });
 const api = (path, method = 'GET', body, username = 'report_owner', tenant = 'operations') => request('osd', `/api/better_reports${path}`, method, body, username, tenant);
 const dataCheck = await request('os', '/br-fixture-data/_search', 'POST', { size: 0, track_total_hits: true }, 'report_owner'); assert.equal(dataCheck.hits.total.value, 12, 'DLS must exclude development records');
@@ -66,7 +79,14 @@ const cases = [
   ['line', [bucket('date_histogram', { field: '@timestamp', interval: '1d', min_doc_count: 1 }), metric('count', 1)]],
   ['area', [bucket('histogram', { field: 'bytes', interval: 300, min_doc_count: 1 }), metric('sum', 1)]],
   ['histogram', [bucket('filters', { filters: [{ input: { query: 'environment: production', language: 'kuery' }, label: 'Production' }] }), metric('avg', 1)]],
-  ['pie', [bucket('range', { field: 'bytes', ranges: [{ from: 0, to: 600 }, { from: 600, to: 1200 }] }), metric('count', 1)]]
+  ['pie', [bucket('range', { field: 'bytes', ranges: [{ from: 0, to: 600 }, { from: 600, to: 1200 }] }), metric('count', 1)]],
+  ['horizontal_bar', [bucket('terms', { field: 'environment', size: 10 }), metric('count', 1)]],
+  ['gauge', [metric('count', 1)]],
+  ['goal', [metric('sum', 1)]],
+  ['heatmap', [bucket('terms', { field: 'environment', size: 10 }), { ...bucket('histogram', { field: 'bytes', interval: 300 }), id: 'c', schema: 'group' }, metric('count', 1)]],
+  ['tagcloud', [bucket('terms', { field: 'environment', size: 10 }), metric('count', 1)]],
+  ['tile_map', [bucket('geohash_grid', { field: 'point', precision: 2 }), metric('count', 1)]],
+  ['region_map', [bucket('terms', { field: 'country', size: 10 }), metric('count', 1)]]
 ];
 const visualRefs = [];
 for (const [type, aggs] of cases) {
@@ -85,6 +105,11 @@ const allArtifact = await api(`/runs/${allRun.id}/pdf?encoding=base64`);
 const allPdf = Buffer.from(allArtifact.pdf, 'base64'); await writeFile('output/integration/all-types.pdf', allPdf);
 const allText = await textOf(allPdf); assert.ok(!allText.includes('1789862400000'), 'Dates must use field formatting'); for (const [type] of cases) assert.ok(allText.includes(`${type} fixture`), `Missing ${type}`);
 assert.ok(allText.includes('6,600') || allText.includes('6600'), 'Sum must honor DLS');
+await so('visualization', 'br-fixture-timeline', { attributes: { title: 'Timeline fixture', visState: JSON.stringify({ type: 'timelion', params: { expression: '.es(index=br-fixture-*,metric=sum:bytes,q="environment: production")', interval: '1d' }, aggs: [] }), kibanaSavedObjectMeta: { searchSourceJSON: '{}' } } });
+const timeline = await api('/sources/import', 'POST', { type: 'visualization', id: 'br-fixture-timeline' }); assert.ok(timeline[0].source, JSON.stringify(timeline));
+const timelineReport = { ...definition, title: 'Timeline report', sources: [timeline[0].source], sections: [{ id: 'timeline', kind: 'panels', columns: 1, sources: [timeline[0].source.key] }] };
+const timelineRun = await completeRun(await api('/preview', 'POST', timelineReport));
+assert.match(await textOf(Buffer.from((await api(`/runs/${timelineRun.id}/pdf?encoding=base64`)).pdf, 'base64')), /Timeline fixture/);
 // Change source configuration, then data; snapshots must stay pinned until refresh.
 await so('visualization', 'br-fixture-metric', { attributes: { title: 'Changed sum', visState: JSON.stringify({ type: 'metric', params: {}, aggs: [metric('sum', 1)] }), kibanaSavedObjectMeta: { searchSourceJSON: JSON.stringify({ indexRefName: 'index', query: { language: 'kuery', query: '' }, filter: [] }) } }, references: [{ type: 'index-pattern', id: 'br-fixture-index', name: 'index' }] });
 await request('os', '/br-fixture-data/_doc/12?refresh=true', 'PUT', { '@timestamp': '2026-09-20T12:00:00Z', environment: 'production', bytes: 1200 });
