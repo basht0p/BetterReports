@@ -7,8 +7,9 @@ export class BetterReportsPublicPlugin {
   setup(core: any, deps: any) {
     core.application.register({ id: 'betterReports', title: 'BetterReports', category: { id: 'opensearch', label: 'OpenSearch', order: 1000 }, order: 8000,
       mount: async (params: any) => {
-        const [start] = await core.getStartServices();
-        ReactDOM.render(React.createElement(App, { core: start }), params.element);
+        const [start, plugins] = await core.getStartServices();
+        ReactDOM.render(React.createElement(start.i18n.Context, null,
+          React.createElement(App, { core: start, data: plugins.data })), params.element);
         return () => ReactDOM.unmountComponentAtNode(params.element);
       } });
     deps.share?.register({ id: 'betterReports', getShareMenuItems: (context: any) => {

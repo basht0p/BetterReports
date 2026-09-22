@@ -115,3 +115,9 @@ BetterReports resolves current group membership on each delivery, accepts up to 
 A successful send means Notifications accepted delivery; it does not guarantee inbox receipt. Notifications does not reliably expose the SMTP phase of failures. Unconfirmed dispatches become **delivery unknown**, without automatic resend. Check Notifications event history and the mail provider before selecting Send now / test. Permission, disabled-configuration, and missing-configuration failures detected before dispatch are definitive failures.
 
 After upgrading, perform a browser hard refresh (or clear cached site assets) so Dashboards loads the new plugin JavaScript and styles.
+
+## Upgrading from 0.0.2 to 0.0.3
+
+Stop the services and use `opensearch-plugin remove betterreports` and `opensearch-dashboards-plugin remove betterReports` in their respective installation directories before installing the 0.0.3 ZIPs. Restart OpenSearch, then Dashboards. Apply the replacement on every applicable node and Dashboards instance. Plugin removal does not remove the BetterReports data indices. Existing records and authorization grants are retained; no role or configuration changes are required for this upgrade. Hard-refresh your browser or clear cached site assets to load the new UI.
+
+The query/filter builder uses the same native controls as Discover. Add dashboard content first to choose fields, then add any number of filters up to the existing 100-filter limit. Fields come from saved source snapshots, and source filters remain active. Editing filters changes the report revision when saved and requires renewed scheduling authorization, as with other report edits.
