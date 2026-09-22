@@ -4,9 +4,9 @@ import { validateTimezone, resolveRange } from './time';
 
 export interface SavedObject { id: string; type: string; version?: string; attributes: Record<string, any>; references: Array<{ type: string; id: string; name: string }>; }
 export interface SavedObjects { get(type: string, id: string): Promise<SavedObject>; find(options: any): Promise<any>; }
-const supportedTypes = new Set(['line', 'area', 'histogram', 'pie', 'metric', 'table']);
+const supportedTypes = new Set(['line', 'area', 'histogram', 'horizontal_bar', 'vertical_bar', 'pie', 'metric', 'table', 'gauge', 'goal', 'heatmap', 'tagcloud', 'tile_map', 'region_map']);
 const metrics = new Set(['count', 'sum', 'avg', 'min', 'max', 'cardinality', 'percentiles']);
-const buckets = new Set(['terms', 'date_histogram', 'histogram', 'range', 'filters']);
+const buckets = new Set(['terms', 'date_histogram', 'histogram', 'range', 'filters', 'geohash_grid']);
 export function parseJson(value: any, fallback: any) {
   if (value === undefined || value === '') return fallback;
   if (typeof value !== 'string') return value;
@@ -28,11 +28,23 @@ export function validateSnapshot(source: Snapshot) {
   const aggs = source.vis.aggs.filter(a => a.enabled !== false);
   if (!aggs.length) throw new ReportError('UNSUPPORTED_CONFIGURATION', `${source.title}: no aggregations configured.`);
   if (source.type === 'pie' && aggs.filter(a => metrics.has(a.type)).length !== 1) throw new ReportError('UNSUPPORTED_CONFIGURATION', 'Pie charts require exactly one metric.');
+  const bucketAggs = aggs.filter(a => buckets.has(a.type));
+  if (['gauge', 'goal', 'tile_map', 'region_map', 'tagcloud', 'heatmap'].includes(source.type) && aggs.filter(a => metrics.has(a.type)).length !== 1) throw new ReportError('UNSUPPORTED_CONFIGURATION', `${source.title}: this visualization requires exactly one metric.`);
+  if (['gauge', 'goal'].includes(source.type) && bucketAggs.length) throw new ReportError('UNSUPPORTED_CONFIGURATION', `${source.title}: bucketed gauges and goals are not yet supported.`);
+  if (source.type === 'heatmap' && bucketAggs.length !== 2) throw new ReportError('UNSUPPORTED_CONFIGURATION', `${source.title}: heat maps require two bucket dimensions.`);
+  if (source.type === 'tagcloud' && (bucketAggs.length !== 1 || bucketAggs[0].type !== 'terms')) throw new ReportError('UNSUPPORTED_CONFIGURATION', `${source.title}: tag clouds require one terms bucket.`);
+  if (source.type === 'tile_map' && (bucketAggs.length !== 1 || bucketAggs[0].type !== 'geohash_grid')) throw new ReportError('UNSUPPORTED_CONFIGURATION', `${source.title}: coordinate maps require one geohash bucket.`);
+  if (source.type === 'region_map' && (bucketAggs.length !== 1 || bucketAggs[0].type !== 'terms')) throw new ReportError('UNSUPPORTED_CONFIGURATION', `${source.title}: region maps require one terms bucket.`);
+  if (source.type === 'region_map' && source.vis.params?.selectedLayer && !/world.?countries/i.test(String(source.vis.params.selectedLayer))) throw new ReportError('UNSUPPORTED_CONFIGURATION', `${source.title}: only the World Countries region layer is available for vector PDF maps.`);
+  if (source.type === 'tile_map' && (source.vis.params?.wms || source.vis.params?.mapType && !/scaled.?circle/i.test(String(source.vis.params.mapType)))) throw new ReportError('UNSUPPORTED_CONFIGURATION', `${source.title}: only scaled-circle coordinate maps can be rendered as vector PDFs.`);
+  if (source.type === 'tagcloud' && Number(bucketAggs[0].params?.size ?? 5) > 40) throw new ReportError('LAYOUT_LIMIT', `${source.title}: tag clouds are limited to 40 terms on a Letter page.`);
+  if (['gauge', 'goal'].includes(source.type) && source.vis.params?.gauge?.percentageMode) throw new ReportError('UNSUPPORTED_CONFIGURATION', `${source.title}: percentage-mode gauges and goals are not supported.`);
   const ids = new Set<string>();
   const colors = source.vis.params?.visColors;
   const safeColor = /^(?:#[0-9a-fA-F]{3,8}|[a-zA-Z]+|(?:rgb|rgba|hsl|hsla)\([0-9.,%\s+-]+\))$/;
   if (colors && (typeof colors !== 'object' || Array.isArray(colors) || Object.values(colors).some(color => typeof color !== 'string' || !safeColor.test(color)))) throw new ReportError('UNSUPPORTED_CONFIGURATION', 'Chart colors must be plain colors. Image patterns and external resources are not supported.');
   const fields = parseJson(source.indexPattern.attributes.fields, []);
+  if (source.type === 'tile_map' && !fields.some((field: any) => field.name === bucketAggs[0].params?.field && field.type === 'geo_point')) throw new ReportError('UNSUPPORTED_CONFIGURATION', `${source.title}: coordinate maps require a geo_point field.`);
   if (source.indexPattern.attributes.dataSourceRef || source.indexPattern.attributes.type === 'rollup') throw new ReportError('UNSUPPORTED_CONFIGURATION', 'Only local, ordinary index patterns are supported.');
   for (const agg of aggs) {
     if (!metrics.has(agg.type) && !buckets.has(agg.type)) throw new ReportError('UNSUPPORTED_CONFIGURATION', `${source.title}: aggregation ${agg.type} is not supported.`);
@@ -47,7 +59,7 @@ export function validateSnapshot(source: Snapshot) {
   if (source.vis.params?.percentageMode || source.vis.params?.showPartialRows || source.vis.params?.showMetricsAtAllLevels) throw new ReportError('UNSUPPORTED_CONFIGURATION', 'Percentage axes and partial/all-level table rows are not supported.');
   if (source.vis.params?.valueAxes?.some((a: any) => a.scale?.type && a.scale.type !== 'linear')) throw new ReportError('UNSUPPORTED_CONFIGURATION', 'Only linear value axes are supported.');
   if ((source.vis.params?.valueAxes?.length ?? 0) > 1 || source.vis.params?.valueAxes?.some((a: any) => a.scale?.mode === 'percentage' || a.scale?.setYExtents === true)) throw new ReportError('UNSUPPORTED_CONFIGURATION', 'Multiple value axes, percentage axes, and custom axis extents are not supported.');
-  if (source.vis.params?.showTotal || source.vis.params?.type === 'gauge') throw new ReportError('UNSUPPORTED_CONFIGURATION', 'Table totals and gauge-style metrics are not supported.');
+  if (source.vis.params?.showTotal) throw new ReportError('UNSUPPORTED_CONFIGURATION', 'Table totals are not supported.');
   if (source.vis.params?.seriesParams?.some((s: any) => s.type && s.type !== source.type)) throw new ReportError('UNSUPPORTED_CONFIGURATION', 'Mixed chart types are not supported.');
   const formats = parseJson(source.indexPattern.attributes.fieldFormatMap, {});
   if (Object.values(formats).some((f: any) => !['number', 'bytes', 'percent', 'date', 'string', 'duration'].includes(f.id))) throw new ReportError('UNSUPPORTED_CONFIGURATION', 'This index pattern uses an unsupported field formatter.');
@@ -91,9 +103,11 @@ export class SourceService {
       try {
         const referenced = root.references?.find(r => r.name === panel.panelRefName);
         const visualId = referenced?.id ?? panel.id;
+        if ((referenced?.type ?? panel.type) === 'map') throw new ReportError('UNSUPPORTED_VISUALIZATION', 'Maps application panels are not supported.');
         if ((referenced?.type ?? panel.type) !== 'visualization' || !visualId) throw new ReportError('UNSUPPORTED_VISUALIZATION', 'Only saved aggregation-based visualizations are supported.');
         const visual = type === 'visualization' ? root : await this.saved.get('visualization', visualId);
         const vis = parseJson(visual.attributes.visState, {});
+        if (!supportedTypes.has(vis.type)) throw new ReportError('UNSUPPORTED_VISUALIZATION', `${visual.attributes.title}: unsupported visualization type ${vis.type}.`);
         const uiState = parseJson(visual.attributes.uiStateJSON, {});
         if (uiState['vis.colors']) vis.params = { ...vis.params, visColors: { ...uiState['vis.colors'], ...vis.params?.visColors } };
         const collected: SavedObject[] = type === 'dashboard' ? [root, visual] : [visual];

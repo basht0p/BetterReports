@@ -38,9 +38,10 @@ assert.equal(restarted.status, 0);
 await wait('Dashboards', () => request('osd', '/api/better_reports/health'), 240);
 if (process.argv.includes('--multi')) await wait('Secondary Dashboards', () => request('osd2', '/api/better_reports/health'), 240);
 await request('os', '/br-fixture-data', 'PUT', { mappings: { properties: { '@timestamp': { type: 'date' }, environment: { type: 'keyword' }, bytes: { type: 'long' } } } }).catch(error => { if (!error.message.includes('resource_already_exists_exception')) throw error; });
-for (let i = 0; i < 20; i++) await request('os', `/br-fixture-data/_doc/${i}?refresh=true`, 'PUT', { '@timestamp': '2026-09-20T12:00:00Z', environment: i < 12 ? 'production' : 'development', bytes: i * 100 });
+await request('os', '/br-fixture-data/_mapping', 'PUT', { properties: { country: { type: 'keyword' }, point: { type: 'geo_point' } } });
+for (let i = 0; i < 20; i++) await request('os', `/br-fixture-data/_doc/${i}?refresh=true`, 'PUT', { '@timestamp': '2026-09-20T12:00:00Z', environment: i < 12 ? 'production' : 'development', bytes: i * 100, country: 'US', point: { lat: 40 + i / 10, lon: -74 } });
 const so = (type, id, body) => request('osd', `/api/saved_objects/${type}/${id}?overwrite=true`, 'POST', body, 'report_owner');
-await so('index-pattern', 'br-fixture-index', { attributes: { title: 'br-fixture-*', timeFieldName: '@timestamp', fields: JSON.stringify([{ name: '@timestamp', type: 'date', searchable: true, aggregatable: true }, { name: 'bytes', type: 'number', searchable: true, aggregatable: true }, { name: 'environment', type: 'string', searchable: true, aggregatable: true }]) } });
+await so('index-pattern', 'br-fixture-index', { attributes: { title: 'br-fixture-*', timeFieldName: '@timestamp', fields: JSON.stringify([{ name: '@timestamp', type: 'date', searchable: true, aggregatable: true }, { name: 'bytes', type: 'number', searchable: true, aggregatable: true }, { name: 'environment', type: 'string', searchable: true, aggregatable: true }, { name: 'country', type: 'string', searchable: true, aggregatable: true }, { name: 'point', type: 'geo_point', searchable: true, aggregatable: true }]) } });
 await so('visualization', 'br-fixture-metric', { attributes: { title: 'Production requests', visState: JSON.stringify({ type: 'metric', params: {}, aggs: [{ id: '1', enabled: true, type: 'count', schema: 'metric', params: {} }] }), kibanaSavedObjectMeta: { searchSourceJSON: JSON.stringify({ indexRefName: 'kibanaSavedObjectMeta.searchSourceJSON.index', query: { language: 'kuery', query: '' }, filter: [] }) } }, references: [{ type: 'index-pattern', id: 'br-fixture-index', name: 'kibanaSavedObjectMeta.searchSourceJSON.index' }] });
 const api = (path, method = 'GET', body, username = 'report_owner', tenant = 'operations') => request('osd', `/api/better_reports${path}`, method, body, username, tenant);
 const dataCheck = await request('os', '/br-fixture-data/_search', 'POST', { size: 0, track_total_hits: true }, 'report_owner'); assert.equal(dataCheck.hits.total.value, 12, 'DLS must exclude development records');
@@ -66,7 +67,14 @@ const cases = [
   ['line', [bucket('date_histogram', { field: '@timestamp', interval: '1d', min_doc_count: 1 }), metric('count', 1)]],
   ['area', [bucket('histogram', { field: 'bytes', interval: 300, min_doc_count: 1 }), metric('sum', 1)]],
   ['histogram', [bucket('filters', { filters: [{ input: { query: 'environment: production', language: 'kuery' }, label: 'Production' }] }), metric('avg', 1)]],
-  ['pie', [bucket('range', { field: 'bytes', ranges: [{ from: 0, to: 600 }, { from: 600, to: 1200 }] }), metric('count', 1)]]
+  ['pie', [bucket('range', { field: 'bytes', ranges: [{ from: 0, to: 600 }, { from: 600, to: 1200 }] }), metric('count', 1)]],
+  ['horizontal_bar', [bucket('terms', { field: 'environment', size: 10 }), metric('count', 1)]],
+  ['gauge', [metric('count', 1)]],
+  ['goal', [metric('sum', 1)]],
+  ['heatmap', [bucket('terms', { field: 'environment', size: 10 }), { ...bucket('histogram', { field: 'bytes', interval: 300 }), id: 'c', schema: 'group' }, metric('count', 1)]],
+  ['tagcloud', [bucket('terms', { field: 'environment', size: 10 }), metric('count', 1)]],
+  ['tile_map', [bucket('geohash_grid', { field: 'point', precision: 2 }), metric('count', 1)]],
+  ['region_map', [bucket('terms', { field: 'country', size: 10 }), metric('count', 1)]]
 ];
 const visualRefs = [];
 for (const [type, aggs] of cases) {
