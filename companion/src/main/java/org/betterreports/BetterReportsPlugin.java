@@ -47,7 +47,7 @@ import org.opensearch.watcher.ResourceWatcherService;
 public class BetterReportsPlugin extends Plugin implements ActionPlugin, SystemIndexPlugin, IdentityAwarePlugin {
     static final String INDEX = ".better-reports-grants-v1";
     static final String PREFIX = "cluster:admin/betterreports/";
-    static final List<String> OPS = List.of("authorize", "execute", "check", "revoke", "list", "release");
+    static final List<String> OPS = List.of("authorize", "execute", "check", "revoke", "list", "release", "notifications", "send");
     private Service service;
     public BetterReportsPlugin(Settings settings) {
         if (!settings.getAsBoolean("plugins.security.system_indices.enabled", false)) throw new IllegalStateException("BetterReports requires plugins.security.system_indices.enabled: true");
@@ -64,7 +64,7 @@ public class BetterReportsPlugin extends Plugin implements ActionPlugin, SystemI
     @Override public void assignSubject(PluginSubject subject) { service.subject = subject; }
     @Override public List<ActionHandler<? extends ActionRequest, ? extends ActionResponse>> getActions() {
         return List.of(new ActionHandler<>(type("authorize"), Authorize.class), new ActionHandler<>(type("execute"), Execute.class),
-            new ActionHandler<>(type("check"), Check.class), new ActionHandler<>(type("revoke"), Revoke.class), new ActionHandler<>(type("list"), ListGrants.class), new ActionHandler<>(type("release"), Release.class));
+            new ActionHandler<>(type("check"), Check.class), new ActionHandler<>(type("revoke"), Revoke.class), new ActionHandler<>(type("list"), ListGrants.class), new ActionHandler<>(type("release"), Release.class), new ActionHandler<>(type("notifications"), Notifications.class), new ActionHandler<>(type("send"), Send.class));
     }
     static ActionType<Reply> type(String op) { return new ActionType<>(PREFIX + op, Reply::new); }
     @Override public List<RestHandler> getRestHandlers(Settings settings, RestController controller, ClusterSettings clusterSettings,
@@ -88,7 +88,7 @@ public class BetterReportsPlugin extends Plugin implements ActionPlugin, SystemI
         @Override public String getName() { return "better_reports_grants"; }
         @Override public List<Route> routes() { return OPS.stream().map(op -> new Route(RestRequest.Method.POST, "/_plugins/_better_reports/" + op)).toList(); }
         @Override protected RestChannelConsumer prepareRequest(RestRequest request, NodeClient client) throws IOException {
-            if (request.content().length() > 5 * 1024 * 1024) throw new IllegalArgumentException("Request exceeds 5 MiB");
+            if (request.content().length() > (request.path().endsWith("/send") ? 36 : 5) * 1024 * 1024) throw new IllegalArgumentException("Request too large");
             String op = request.path().substring(request.path().lastIndexOf('/') + 1);
             String json = request.hasContent() ? request.content().utf8ToString() : "{}";
             return channel -> client.execute(type(op), new Request(json), ActionListener.wrap(
@@ -113,6 +113,8 @@ public class BetterReportsPlugin extends Plugin implements ActionPlugin, SystemI
     public static class Check extends Transport { @Inject public Check(TransportService t, ActionFilters f, Service s) { super("check", t, f, s); } }
     public static class Revoke extends Transport { @Inject public Revoke(TransportService t, ActionFilters f, Service s) { super("revoke", t, f, s); } }
     public static class ListGrants extends Transport { @Inject public ListGrants(TransportService t, ActionFilters f, Service s) { super("list", t, f, s); } }
+    public static class Notifications extends Transport { @Inject public Notifications(TransportService t, ActionFilters f, Service s) { super("notifications", t, f, s); } }
+    public static class Send extends Transport { @Inject public Send(TransportService t, ActionFilters f, Service s) { super("send", t, f, s); } }
     public static class Release extends Transport { @Inject public Release(TransportService t, ActionFilters f, Service s) { super("release", t, f, s); } }
 
     public static class Service {
@@ -167,7 +169,8 @@ public class BetterReportsPlugin extends Plugin implements ActionPlugin, SystemI
         }
         Object handle(String op, Map<String,Object> input) throws Exception {
             User caller = actor(); init();
-            if (!Set.of("execute", "check", "release").contains(op)) tenantAccess();
+            if (!Set.of("execute", "check", "release", "send").contains(op)) tenantAccess();
+            if (op.equals("notifications")) return new NotificationsBridge(this).options(input);
             if (op.equals("authorize")) {
                 keys(input, "reportId", "title", "persistent", "revision", "panels", "from", "to", "fingerprint");
                 String reportId = string(input, "reportId"); String fingerprint = string(input, "fingerprint");
@@ -194,7 +197,7 @@ public class BetterReportsPlugin extends Plugin implements ActionPlugin, SystemI
                 if (!caller.getSecurityRoles().contains("betterreports_tenant_manager") && !caller.getSecurityRoles().contains("all_access")) query.filter(QueryBuilders.termQuery("owner", caller.getName()));
                 return internal(() -> { var result = client.search(new SearchRequest(INDEX).source(new SearchSourceBuilder().query(query).size(1000))).actionGet(); List<Object> list = new ArrayList<>(); for (var hit : result.getHits()) if (!Boolean.TRUE.equals(hit.getSourceAsMap().get("runOnly"))) list.add(summary(hit.getId(), hit.getSourceAsMap())); return Map.of("grants", list); });
             }
-            keys(input, op.equals("execute") ? new String[]{"id", "fingerprint", "from", "to"} : new String[]{"id", "fingerprint"});
+            keys(input, op.equals("send") ? new String[]{"id", "fingerprint", "senderId", "recipientGroupIds", "subject", "message", "runId", "filename", "pdf"} : op.equals("execute") ? new String[]{"id", "fingerprint", "from", "to"} : new String[]{"id", "fingerprint"});
             String id = string(input, "id"); Map<String,Object> grant = get(id);
             if (op.equals("release")) {
                 require(Boolean.TRUE.equals(grant.get("runOnly")), "Only temporary run permissions can be released by workers");
@@ -212,6 +215,18 @@ public class BetterReportsPlugin extends Plugin implements ActionPlugin, SystemI
             if (op.equals("check") && !caller.getSecurityRoles().contains("betterreports_worker") && !caller.getSecurityRoles().contains("all_access")) { tenantAccess(); ownerOrManager(grant, caller); }
             active(grant); require(Objects.equals(input.get("fingerprint"), grant.get("fingerprint")), "Report changed: authorize this revision again");
             if (op.equals("check")) return summary(id, grant);
+            if (op.equals("send")) {
+                require(!Boolean.TRUE.equals(grant.get("runOnly")), "Scheduled authorization required for delivery");
+                User executionUser = User.fromSerializedBase64((String)grant.get("user"));
+                try (ThreadContext.StoredContext ignored = pool.getThreadContext().stashContext()) {
+                    pool.getThreadContext().putTransient(ConfigConstants.OPENDISTRO_SECURITY_USER, executionUser);
+                    pool.getThreadContext().putTransient("_opendistro_security_injected_roles", "plugin|" + String.join(",", executionUser.getSecurityRoles()));
+                    // Populate Notifications' owner metadata from the protected grant, never REST input.
+                    pool.getThreadContext().putTransient(ConfigConstants.OPENDISTRO_SECURITY_USER_INFO_THREAD_CONTEXT,
+                        executionUser.getName().replace("|", "\\|") + "|" + String.join(",", executionUser.getRoles()) + "|" + String.join(",", executionUser.getSecurityRoles()) + "|" + tenant(executionUser) + "|READ");
+                    return new NotificationsBridge(this).send(input);
+                }
+            }
             interval(input); List<Object> results = new ArrayList<>();
             User executionUser = User.fromSerializedBase64((String)grant.get("user"));
             for (Map<String,Object> panel : (List<Map<String,Object>>)grant.get("panels")) {

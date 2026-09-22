@@ -73,12 +73,13 @@ export class Runner {
     const schedules = await this.store.list<Schedule>('schedules', { enabled: true });
     for (let offset = 0; offset < schedules.length && !this.stopped; offset += 10) await Promise.all(schedules.slice(offset, offset + 10).map(async version => {
       const schedule = version.value;
+      if (!schedule.senderId || !schedule.recipientGroupIds?.length) { await this.store.replace('schedules', schedule.id, { ...schedule, enabled: false, updatedAt: now.toISOString() }, version); this.log('schedule=' + schedule.id + ' NOTIFICATIONS_REQUIRED'); return; }
       if (Date.parse(schedule.nextAt) > now.getTime()) return;
       try {
         const due = latestDue(schedule.cron, schedule.timezone, schedule.nextAt, now, schedule.lastLocal);
         const report = (await required<Report>(this.store, 'reports', schedule.reportId)).value;
         if (report.owner !== schedule.owner || report.tenant !== schedule.tenant) throw new ReportError('FORBIDDEN', 'Schedule ownership is inconsistent.');
-        if (!due.duplicate) await this.enqueue(report, 'schedule', due.due, { recipients: schedule.recipients, subject: schedule.subject, message: schedule.message }, schedule.id);
+        if (!due.duplicate) await this.enqueue(report, 'schedule', due.due, { senderId: schedule.senderId, recipientGroupIds: schedule.recipientGroupIds, subject: schedule.subject, message: schedule.message }, schedule.id);
         await this.store.replace('schedules', schedule.id, { ...schedule, nextAt: due.next.toISOString(), lastLocal: localKey(due.due, schedule.timezone), skipped: schedule.skipped + due.skipped, updatedAt: now.toISOString() }, version);
       } catch (error) {
         this.log(`schedule=${schedule.id} ${safeError(error).code}`);
@@ -119,18 +120,18 @@ export class Runner {
       if (run.delivery) {
         await this.executor.authorize(run.report);
         controller.signal.throwIfAborted();
-        // Publish sending BEFORE touching SMTP. A crash after this point cannot
+        // Publish sending BEFORE touching Notifications. A crash after this point cannot
         // cause an automatic resend, even if the lease expires on another node.
         await this.transition(run, { status: 'sending' }); sending = true;
-        phase = 'smtp'; await this.mailer.send(run, pdf);
+        phase = 'notifications'; await this.mailer.send(run, pdf);
       }
       await this.transition(run, { status: 'complete', finishedAt: new Date().toISOString() });
       this.health.completed++;
     } catch (error: any) {
-      // Shutdown leaves the lease for recovery. In-flight SMTP remains sending
+      // Shutdown leaves the lease for recovery. In-flight Notifications remains sending
       // and becomes delivery_unknown; generation is reclaimed after expiry.
       if (this.stopped) return;
-      const ambiguous = error?.code === 'DELIVERY_UNKNOWN' || (sending && !(error instanceof ReportError && error.code === 'SMTP_FAILED'));
+      const ambiguous = error?.code === 'DELIVERY_UNKNOWN' || (sending && !(error instanceof ReportError && ['DELIVERY_REJECTED', 'NOTIFICATIONS_REQUIRED', 'GRANT_REVOKED', 'GRANT_DENIED', 'GRANT_REQUIRED', 'GRANT_STALE'].includes(error.code)));
       const retryable = error instanceof ReportError && error.retryable && run.attempt < 3 && !ambiguous;
       const status = ambiguous ? 'delivery_unknown' : retryable ? 'queued' : 'failed';
       try { await this.transition(run, { status, error: controller.signal.aborted && !ambiguous ? { code: 'RUN_TIMEOUT', message: 'Generation was cancelled or exceeded its deadline.' } : safeError(error),

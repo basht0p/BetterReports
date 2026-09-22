@@ -1,6 +1,6 @@
 # Architecture
 
-`public/` contains the React/EUI application and embedded PDF.js viewer. `common/` contains validation schemas and shared record types. `server/platform.ts` isolates the exact OpenSearch Dashboards 3.8.0 integration. Server modules implement source import, records, scheduling, SMTP, and the ECharts/pdfmake renderer.
+`public/` contains the React/EUI application and embedded PDF.js viewer. `common/` contains validation schemas and shared record types. `server/platform.ts` isolates the exact OpenSearch Dashboards 3.8.0 integration. Server modules implement source import, records, scheduling, Notifications delivery, and the ECharts/pdfmake renderer.
 
 ## Execution
 
@@ -11,7 +11,7 @@
 5. Validate the grant and revision, execute its approved queries inside OpenSearch with the captured role membership, and normalize returned results using frozen field settings.
 6. Render in a bounded Node worker thread so PDF composition cannot block Dashboards' event loop. The worker receives data only, not credentials.
 7. Persist the PDF with a checksum and expiration, then publish the artifact reference using the current fence.
-8. For email, recheck grant revocation and persist `sending` before contacting SMTP. Record completion, definitive failure, or uncertain delivery.
+8. For email, recheck grant revocation and persist `sending` before contacting Notifications. Record completion, definitive failure, or uncertain delivery.
 
 All execution results and scheduling metadata are stored in `.better-reports-v1-{reports,schedules,runs,artifacts}`. Index mappings intentionally exclude report bodies and PDF data from indexing. OpenSearch sequence numbers and primary terms guard updates. The dedicated internal storage identity is separate from the restricted worker identity.
 

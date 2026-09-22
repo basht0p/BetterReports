@@ -27,14 +27,14 @@ test('two runners claim one occurrence and deliver it once', async () => {
   const store = new MemoryStore(); await store.create('reports', report.id, report); let sent = 0;
   const a = new Runner(store, executor, render, { send: async () => { sent++; } }), b = new Runner(store, executor, render, { send: async () => { sent++; } });
   const when = new Date();
-  const ids = await Promise.all([a.enqueue(report, 'schedule', when, { recipients: ['a@example.com'], subject: 'Report', message: '' }, 'schedule-1'), b.enqueue(report, 'schedule', when, { recipients: ['a@example.com'], subject: 'Report', message: '' }, 'schedule-1')]);
+  const ids = await Promise.all([a.enqueue(report, 'schedule', when, { senderId: 'sender', recipientGroupIds: ['group'], subject: 'Report', message: '' }, 'schedule-1'), b.enqueue(report, 'schedule', when, { senderId: 'sender', recipientGroupIds: ['group'], subject: 'Report', message: '' }, 'schedule-1')]);
   assert.equal(ids[0], ids[1]); await Promise.all([a.tick(), b.tick()]);
   await waitUntil(async () => (await store.get<Run>('runs', ids[0]))?.value.status === 'complete'); assert.equal(sent, 1); a.stop(); b.stop();
 });
 test('ambiguous delivery is terminal and never automatically resent', async () => {
   const store = new MemoryStore(); let sent = 0;
   const runner = new Runner(store, executor, render, { send: async () => { sent++; throw new ReportError('DELIVERY_UNKNOWN', 'Relay result unknown.'); } });
-  const id = await runner.enqueue(report, 'manual', new Date(), { recipients: ['a@example.com'], subject: 'Report', message: '' }); await runner.tick();
+  const id = await runner.enqueue(report, 'manual', new Date(), { senderId: 'sender', recipientGroupIds: ['group'], subject: 'Report', message: '' }); await runner.tick();
   await waitUntil(async () => (await store.get<Run>('runs', id))?.value.status === 'delivery_unknown');
   await runner.tick(); assert.equal(sent, 1); runner.stop();
 });
@@ -62,7 +62,7 @@ test('cancellation fences off a late renderer result', async () => {
 test('100 schedules are enqueued while render concurrency stays at two', async () => {
   const store = new MemoryStore(); await store.create('reports', report.id, report);
   const nextAt = new Date(Date.now() - 60000).toISOString();
-  for (let i = 0; i < 100; i++) { const schedule: Schedule = { id: `s${i}`, revision: 1, reportId: report.id, owner: report.owner, tenant: report.tenant, cron: '* * * * *', timezone: 'UTC', enabled: true, recipients: ['a@example.com'], subject: 'Report', message: '', skipped: 0, nextAt, updatedAt: nextAt }; await store.create('schedules', schedule.id, schedule); }
+  for (let i = 0; i < 100; i++) { const schedule: Schedule = { id: `s${i}`, revision: 1, reportId: report.id, owner: report.owner, tenant: report.tenant, cron: '* * * * *', timezone: 'UTC', enabled: true, senderId: 'sender', recipientGroupIds: ['group'], subject: 'Report', message: '', skipped: 0, nextAt, updatedAt: nextAt }; await store.create('schedules', schedule.id, schedule); }
   let active = 0, max = 0; let release!: () => void; const gate = new Promise<void>(resolve => { release = resolve; });
   const runner = new Runner(store, executor, async () => { active++; max = Math.max(max, active); await gate; active--; return render(); }, { send: async () => {} });
   await runner.tick(); await delay(20); assert.equal((await store.list('runs')).length, 100); assert.equal(max, 2); release(); await delay(30); runner.stop();

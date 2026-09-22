@@ -8,7 +8,7 @@ import { SignedXml } from 'xml-crypto';
 const secrets = JSON.parse(await readFile('.platform/dev-secrets.json','utf8'));
 const basic = user => `Basic ${Buffer.from(`${user}:${user==='admin'?secrets.admin:secrets.runner}`).toString('base64')}`;
 function request(path,body,auth=basic('admin'),tenant='operations',method='POST') {
-  return new Promise((resolve,reject)=> { const req=https.request({hostname:'127.0.0.1',port:19200,path,method,rejectUnauthorized:false,headers:{...(auth?{authorization:auth}:{}),securitytenant:tenant,'content-type':'application/json'}},res=>{let text='';res.on('data',c=>text+=c);res.on('end',()=>{let data;try{data=JSON.parse(text);}catch{data={message:text.slice(0,200)}}if(res.statusCode>=400)reject(Object.assign(new Error(`${path}: ${res.statusCode} ${JSON.stringify(data)}`),{status:res.statusCode}));else resolve(data);});});req.on('error',reject);req.end(body===undefined?undefined:JSON.stringify(body)); });
+  return new Promise((resolve,reject)=> { const req=https.request({hostname:'127.0.0.1',port:19400,path,method,rejectUnauthorized:false,headers:{...(auth?{authorization:auth}:{}),securitytenant:tenant,'content-type':'application/json'}},res=>{let text='';res.on('data',c=>text+=c);res.on('end',()=>{let data;try{data=JSON.parse(text);}catch{data={message:text.slice(0,200)}}if(res.statusCode>=400)reject(Object.assign(new Error(`${path}: ${res.statusCode} ${JSON.stringify(data)}`),{status:res.statusCode}));else resolve(data);});});req.on('error',reject);req.end(body===undefined?undefined:JSON.stringify(body)); });
 }
 const delay=ms=>new Promise(r=>setTimeout(r,ms));
 const put=(path,body)=>request(`/_plugins/_security/api/${path}`,body,basic('admin'),'operations','PUT');
@@ -27,7 +27,7 @@ const updated=structuredClone(original);
 updated.config.dynamic.authc.basic_internal_auth_domain.http_authenticator.challenge=false;
 updated.config.dynamic.authc.basic_internal_auth_domain.order=0;
 updated.config.dynamic.authc.saml_fixture={http_enabled:true,transport_enabled:false,order:1,http_authenticator:{type:'saml',challenge:true,config:{idp:{metadata_content:metadata,entity_id:issuer},sp:{entity_id:sp},kibana_url:base,roles_key:'Role',exchange_key:randomBytes(48).toString('hex'),jwt:{expiry:'session',jwt_clock_skew_tolerance_seconds:0}}},authentication_backend:{type:'noop'}};
-await put('roles/saml_reporting',{cluster_permissions:['cluster:admin/betterreports/authorize','cluster:admin/betterreports/list','cluster:admin/betterreports/revoke'],index_permissions:[{index_patterns:['br-fixture-*'],allowed_actions:['read'],dls:'{"term":{"environment":"production"}}'}],tenant_permissions:[{tenant_patterns:['operations'],allowed_actions:['kibana_all_read']}]});
+await put('roles/saml_reporting',{cluster_permissions:JSON.parse(await readFile('companion/roles.json','utf8')).betterreports_user.cluster_permissions,index_permissions:[{index_patterns:['br-fixture-*'],allowed_actions:['read'],dls:'{"term":{"environment":"production"}}'}],tenant_permissions:[{tenant_patterns:['operations'],allowed_actions:['kibana_all_read']}]});
 await put('rolesmapping/saml_reporting',{backend_roles:['saml-reporters']});
 function assertion(groups) {
  const now=new Date(), before=new Date(now-60000).toISOString(), after=new Date(+now+120000).toISOString(), instant=now.toISOString(), id='_br'+randomBytes(12).toString('hex');
@@ -51,8 +51,12 @@ try {
  await assert.rejects(request('/_plugins/_security/authinfo',undefined,auth,'operations','GET'),e=>e.status===401);
  const result=await request('/_plugins/_better_reports/execute',{id:grant.id,fingerprint:payload.fingerprint,from:payload.from,to:payload.to},basic('betterreports_runner'));
  assert.equal(result.results[0].hits.total.value,13,'SAML owner DLS survives session expiry');
+ const fixture=JSON.parse(await readFile('output/integration/results.json','utf8'));
+ const baseline=(await (await fetch('http://127.0.0.1:18081')).json()).count;
+ const delivered=await request('/_plugins/_better_reports/send',{id:grant.id,fingerprint:payload.fingerprint,senderId:fixture.senderId,recipientGroupIds:fixture.recipientGroupIds,subject:'SAML session expired report',message:'Synthetic fixture',runId:'saml-'+Date.now(),filename:'saml-report.pdf',pdf:(await readFile('output/integration/report.pdf')).toString('base64')},basic('betterreports_runner'));
+ assert.equal(delivered.delivered,true);assert.equal((await (await fetch('http://127.0.0.1:18081')).json()).count,baseline+1);
  await request('/_plugins/_better_reports/revoke',{id:grant.id});
  await assert.rejects(request('/_plugins/_better_reports/execute',{id:grant.id,fingerprint:payload.fingerprint,from:payload.from,to:payload.to},basic('betterreports_runner')),e=>e.status===403);
- await writeFile('output/integration/saml.json',JSON.stringify({version:'3.8.0',signedAssertion:true,internalUserRequired:false,expiredSessionExecution:true,dlsCount:13,crossTenantDenied:true,revocation:true,checkedAt:new Date().toISOString()},null,2));
- console.log('PASS signed SAML group authorization, session expiry, DLS, tenant isolation, and explicit revocation.');
+ await writeFile('output/integration/saml.json',JSON.stringify({version:'3.8.0',signedAssertion:true,internalUserRequired:false,expiredSessionExecution:true,expiredSessionNotificationsDelivery:true,dlsCount:13,crossTenantDenied:true,revocation:true,checkedAt:new Date().toISOString()},null,2));
+ console.log('PASS signed SAML group authorization, session expiry, Notifications attachment delivery, DLS, tenant isolation, and explicit revocation.');
 } finally { await apply(original); }

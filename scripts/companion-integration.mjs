@@ -7,7 +7,7 @@ const secrets = JSON.parse(await readFile('.platform/dev-secrets.json', 'utf8'))
 function request(path, body, user = 'admin', tenant = 'operations', method = 'POST') {
   const passwords = { admin: secrets.admin, report_owner: secrets.owner, report_other: secrets.other, betterreports_runner: secrets.runner };
   return new Promise((resolve, reject) => {
-    const req = https.request({ hostname: '127.0.0.1', port: 19200, path, method, rejectUnauthorized: false, headers: { authorization: `Basic ${Buffer.from(`${user}:${passwords[user]}`).toString('base64')}`, securitytenant: tenant, 'content-type': 'application/json' } }, res => {
+    const req = https.request({ hostname: '127.0.0.1', port: 19400, path, method, rejectUnauthorized: false, headers: { authorization: `Basic ${Buffer.from(`${user}:${passwords[user]}`).toString('base64')}`, securitytenant: tenant, 'content-type': 'application/json' } }, res => {
       let text = ''; res.on('data', chunk => text += chunk); res.on('end', () => { let json; try { json = JSON.parse(text); } catch { json = { text }; } if (res.statusCode >= 400) reject(Object.assign(new Error(`${res.statusCode}: ${JSON.stringify(json)}`), { status: res.statusCode })); else resolve(json); });
     }); req.on('error', reject); req.end(body === undefined ? undefined : JSON.stringify(body));
   });
@@ -18,7 +18,7 @@ for (const tenant of ['operations','finance']) await put(`tenants/${tenant}`, { 
 for (const [user, password] of [['report_owner',secrets.owner], ['report_other',secrets.other], ['betterreports_runner',secrets.runner]]) await put(`internalusers/${user}`, { password, backend_roles: [] });
 await put('roles/companion_owner', { cluster_permissions: ['cluster:admin/betterreports/authorize','cluster:admin/betterreports/list','cluster:admin/betterreports/revoke','cluster:admin/betterreports/check'], index_permissions: [{ index_patterns: ['br-companion-*'], allowed_actions: ['read'], dls: '{"term":{"department":"operations"}}', fls: ['~secret'] }], tenant_permissions: [{ tenant_patterns: ['operations'], allowed_actions: ['kibana_all_write'] }] });
 await put('rolesmapping/companion_owner', { users: ['report_owner','report_other'] });
-await put('roles/betterreports_worker', { cluster_permissions: ['cluster:admin/betterreports/execute','cluster:admin/betterreports/check','cluster:admin/betterreports/release'], index_permissions: [], tenant_permissions: [] });
+await put('roles/betterreports_worker', JSON.parse(await readFile('companion/roles.json', 'utf8')).betterreports_worker);
 await put('rolesmapping/betterreports_worker', { users: ['betterreports_runner'] });
 await request('/br-companion-data', { mappings: { properties: { department: { type: 'keyword' }, '@timestamp': { type: 'date' }, secret: { type: 'long' } } } }, 'admin','', 'PUT').catch(e => { if (!e.message.includes('resource_already_exists')) throw e; });
 for (const [id,department] of [[1,'operations'],[2,'finance']]) await request(`/br-companion-data/_doc/${id}?refresh=true`, { department, '@timestamp':'2026-09-20T12:00:00Z', secret:42 },'admin','', 'PUT');

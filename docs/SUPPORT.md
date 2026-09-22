@@ -32,6 +32,6 @@ Very large metric sections, extremely wide tables, and dense legends should be d
 
 Five-field cron in the chosen IANA timezone; UI presets provide daily, weekly, and monthly starting points. Nonexistent spring-forward times are skipped. Repeated fall-back local minutes run once. A day absent from a month has no occurrence. After downtime, only the latest missed occurrence is enqueued, with older occurrences counted as skipped.
 
-Run IDs deduplicate scheduled occurrences. Reporting bounds and configuration are frozen when the occurrence is enqueued. SMTP acceptance is recorded separately from generation. Unknown delivery outcomes require human review before deliberate resend using **Send now / test**.
+Run IDs deduplicate scheduled occurrences. Reporting bounds and configuration are frozen when the occurrence is enqueued. Notifications acceptance is recorded separately from generation. Unknown delivery outcomes require human review before deliberate resend using **Send now / test**.
 
 The scheduler currently processes at most 1,000 active queue records per scan and the UI lists up to 1,000 recent records. Defaults are designed for 100 schedules; this is not an unbounded enterprise queue.

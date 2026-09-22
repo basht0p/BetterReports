@@ -1,6 +1,6 @@
 import { PlatformAdapter } from './platform';
 import { OpenSearchStore } from './store';
-import { SmtpMailer } from './mail';
+import { NotificationsMailer } from './mail';
 import { Runner } from './runner';
 import { threadedRender } from './threaded_renderer';
 import { registerRoutes, Services } from './routes';
@@ -28,7 +28,7 @@ export class BetterReportsPlugin {
   start(core: any, deps: any) {
     const store = new OpenSearchStore(core.opensearch.client.asInternalUser);
     const platform = new PlatformAdapter(core, deps.data, { username: this.config.worker.username, password: process.env[this.config.worker.passwordEnv] ?? '' }, this.config.limits);
-    const mailer = new SmtpMailer({ ...this.config.smtp, password: process.env[this.config.smtp.passwordEnv] ?? '' });
+    const mailer = new NotificationsMailer(platform.grants);
     const runner = new Runner(store, platform, threadedRender, mailer, this.config.limits, message => this.context.logger.get().warn(message));
     void store.init().then(() => { if (this.stopped) { runner.stop(); return; } this.services = { store, platform, runner, adminRoles: this.config.adminRoles }; runner.start(); }).catch(error => { this.startError = error; this.context.logger.get().error('BetterReports storage initialization failed. Verify internal-user index permissions.'); });
     return {};

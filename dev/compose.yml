@@ -10,7 +10,7 @@ services:
       OPENSEARCH_INITIAL_ADMIN_PASSWORD: ${BR_ADMIN_PASSWORD}
       plugins.security.system_indices.enabled: 'true'
     ports:
-      - 127.0.0.1:19200:9200
+      - 127.0.0.1:19400:9200
   dashboards: &dashboards
     build:
       context: ..

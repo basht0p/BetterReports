@@ -36,7 +36,7 @@ export interface ExecutionGrant { id: string; fingerprint: string; createdAt: st
 export type Report = ReportInput & Identity & { id: string; revision: number; schemaVersion: 1; updatedAt: string; grant?: ExecutionGrant };
 export const scheduleSchema = z.object({
   reportId: text(), cron: text(), timezone: text(), enabled: z.boolean(),
-  recipients: z.array(z.string().email().max(254)).min(1).max(50),
+  senderId: z.string().min(1).max(1000), recipientGroupIds: z.array(z.string().min(1).max(1000)).min(1).max(50),
   subject: text(200).refine(v => !/[\r\n]/.test(v)), message: z.string().max(10000)
 }).strict();
 export type ScheduleInput = z.infer<typeof scheduleSchema>;
@@ -47,7 +47,7 @@ export interface Run extends Identity {
   scheduledAt: string; createdAt: string; expiresAt: string; from: string; to: string;
   status: RunStatus; attempt: number; fence: number; leaseUntil?: string; worker?: string;
   error?: { code: string; message: string }; artifactId?: string; finishedAt?: string;
-  delivery?: Pick<Schedule, 'recipients' | 'subject' | 'message'>; nextAttemptAt?: string; grantReleased?: boolean;
+  delivery?: Pick<Schedule, 'senderId' | 'recipientGroupIds' | 'subject' | 'message'>; nextAttemptAt?: string; grantReleased?: boolean;
 }
 export interface Artifact extends Identity { id: string; runId: string; pdf: string; sha256: string; pages: number; expiresAt: string; }
 export interface Cell { text: string; value: string | number | null; }

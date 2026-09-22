@@ -2,9 +2,9 @@
 
 Rendered, branded US Letter PDF reports for **OpenSearch and OpenSearch Dashboards 3.8.0**.
 
-**Initial release: [v0.0.1](https://github.com/basht0p/BetterReports/releases/tag/v0.0.1).** Download both plugin ZIPs and their SHA-256 checksums from the release. The plugin version is `0.0.1`; `3.8.0` in the archive filenames identifies the required OpenSearch platform version.
+**Latest release: [v0.0.2](https://github.com/basht0p/BetterReports/releases/tag/v0.0.2).** Download both plugin ZIPs and their SHA-256 checksums from the release. The plugin version is `0.0.2`; `3.8.0` in the archive filenames identifies the required OpenSearch platform version.
 
-BetterReports imports saved dashboards and visualizations into reusable sections, runs approved queries through durable, revocable OpenSearch grants, and produces vector charts and selectable PDF text. The same PDF is used for preview, download, and SMTP attachments. Scheduled jobs run inside Dashboards; no external worker or browser service is required.
+BetterReports imports saved dashboards and visualizations into reusable sections, runs approved queries through durable, revocable OpenSearch grants, and produces vector charts and selectable PDF text. The same PDF is used for preview, download, and Notifications email attachments. Scheduled jobs run inside Dashboards; no external worker or browser service is required.
 
 ## Build and validate
 
@@ -25,7 +25,7 @@ The companion build creates `build/betterreports-opensearch-3.8.0.zip`. Install 
 
 ## Install
 
-Install the OpenSearch companion on every OpenSearch node, enable `plugins.security.system_indices.enabled: true`, and follow the [deployment guide](docs/DEPLOYMENT.md) for role mappings, the restricted worker identity, and SMTP configuration:
+Install the OpenSearch companion on every OpenSearch node, enable `plugins.security.system_indices.enabled: true`, and follow the [deployment guide](docs/DEPLOYMENT.md) for role mappings, the restricted worker identity, and Notifications configuration. Upgrading from 0.0.1 requires removing BetterReports SMTP settings and selecting Notifications senders/groups for existing schedules.
 
 ```sh
 bin/opensearch-plugin install file:///absolute/path/betterreports-opensearch-3.8.0.zip
@@ -42,7 +42,7 @@ The existing Reporting plugin may remain installed. Open **BetterReports** from 
 1. Select saved sources and explicitly choose supported panels.
 2. Arrange sections, set the reporting interval, and customize branding.
 3. Generate a preview, then save the reusable report definition.
-4. Authorize the saved report for scheduling, then create a schedule with a timezone, recurrence, and recipients. Authorization lasts indefinitely until revoked.
+4. Authorize the saved report for scheduling, then create a schedule with a timezone, recurrence, Notifications email sender, and recipient groups. Authorization lasts indefinitely until revoked.
 5. Inspect progress and delivery results in Run history.
 
 Source configurations are snapshots. Data is queried anew each run. **Refresh sources** deliberately adopts upstream configuration changes; it operates on the saved report, so save local edits first.
