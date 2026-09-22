@@ -10,13 +10,19 @@
 
 ## Sources
 
-Supported saved visualization IDs: `line`, `area`, `histogram` (bar), `pie` (including donut), `metric`, and `table`.
+Supported aggregation visualization IDs: `area`, `table` (Data Table), `gauge`, `goal`, `heatmap`, `horizontal_bar`, `line`, `metric`, `pie` (including donut), `region_map`, `tagcloud`, `tile_map` (Coordinate Map), and `histogram` (Vertical Bar). A `vertical_bar` ID is accepted as an alias. Charts are rendered as SVG; tables, metrics, and tag clouds use selectable PDF text.
 
-Supported enabled aggregation types: `count`, `sum`, `avg`, `min`, `max`, `cardinality`, `percentiles`, `terms`, `date_histogram`, `histogram`, `range`, and `filters`.
+The Maps application has a separate `map` saved-object format. BetterReports imports a map containing exactly one visible, fixed-precision geohash cluster layer with a local index pattern and a supported metric. It draws a vector world basemap and geohash circles. Document layers, multiple data layers, custom/remote basemaps, spatial filters, viewport-bound queries, geohex/geotile clusters, dynamic precision, and custom layer JSON are rejected with a reason. Map imagery and live map controls are not embedded in the PDF.
+
+Timeline saved visualizations are accepted when their expression is a single `.es()` or `.opensearch()` series with an explicit saved index-pattern name. The supported arguments are `index`, `timefield` (matching the index pattern), `q`, `metric`, and `split`. The result uses a native date histogram and vector line chart. Chained Timeline functions, multiple series, and implicit/default indices are rejected rather than approximated.
+
+Supported enabled aggregation types: `count`, `sum`, `avg`, `min`, `max`, `cardinality`, `percentiles`, `terms`, `date_histogram`, `histogram`, `range`, `filters`, and `geohash_grid` for Coordinate Maps and supported Maps cluster layers.
 
 Queries are executed through the platform aggregation and search-source services and normalized with its tabification implementation. Source queries, dashboard queries, inherited saved searches, panel queries, filters, and explicit index references are imported. Report time bounds replace source time bounds. Query and filter inheritance otherwise remains additive.
 
-Unsupported configurations are rejected with a reason. These include pipeline aggregations, scripted fields, advanced JSON aggregation overrides, other/missing buckets, partial/all-level table rows, percentage axes, logarithmic/multiple value axes, custom axis extents, mixed chart types, table totals, unsupported field formatters, remote sources, rollups, by-value/unsaved panels, Vega, TSVB, maps, PPL/SQL visualizations, and third-party embeddables. Pie charts require one metric. Tables require full width.
+Unsupported configurations are rejected with a reason. These include pipeline aggregations, scripted fields, advanced JSON aggregation overrides, other/missing buckets, partial/all-level table rows, percentage axes, logarithmic/multiple value axes, custom axis extents, mixed chart types, table totals, unsupported field formatters, remote sources, rollups, by-value/unsaved panels, and third-party embeddables. Pie charts require one metric. Tables require full width. Gauge/Goal currently require one unbucketed metric; Heat Map requires two bucket dimensions; Tag Cloud requires one terms bucket; Coordinate Map requires one geohash bucket on a `geo_point` field; Region Map requires one terms bucket and the World Countries layer.
+
+There is no planned support for Controls, Markdown, PPL, TSVB, Vega, or VisBuilder. These source types remain explicitly unsupported in the builder.
 
 Report charts preserve data series, ordinary stacking, labels, legends, and configured series colors within a document layout. They are not pixel-identical reproductions of the dashboard's interactive controls or grid. Dense labels use chart layout overlap avoidance. The supported configuration checks are deliberately narrower than the complete Dashboards visualization API; extend the checks and corresponding renderer tests together when adding features.
 

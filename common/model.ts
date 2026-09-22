@@ -4,9 +4,9 @@ const text = (max = 200) => z.string().trim().min(1).max(max);
 export const identitySchema = z.object({ owner: text(), tenant: z.string().max(200) }).strict();
 export type Identity = z.infer<typeof identitySchema>;
 export const querySchema = z.object({ language: z.enum(['kuery', 'lucene']), query: z.string().max(10000) }).strict();
-export const sourceRefSchema = z.object({ type: z.enum(['dashboard', 'visualization', 'search', 'index-pattern']), id: text(1000), version: z.string().optional() }).strict();
+export const sourceRefSchema = z.object({ type: z.enum(['dashboard', 'visualization', 'search', 'index-pattern', 'map']), id: text(1000), version: z.string().optional() }).strict();
 export const snapshotSchema = z.object({
-  key: text(), title: text(), type: z.enum(['line', 'area', 'histogram', 'pie', 'metric', 'table']),
+  key: text(), title: text(), type: z.enum(['line', 'area', 'histogram', 'horizontal_bar', 'vertical_bar', 'pie', 'metric', 'table', 'gauge', 'goal', 'heatmap', 'tagcloud', 'tile_map', 'region_map']),
   refs: z.array(sourceRefSchema).min(1).max(100),
   importRef: sourceRefSchema, panelId: z.string().optional(),
   indexPattern: z.object({ id: text(1000), attributes: z.record(z.unknown()) }),

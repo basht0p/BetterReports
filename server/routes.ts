@@ -32,7 +32,7 @@ export function registerRoutes(router: any, ready: () => Promise<Services>, log:
   const ownedList = async (s: Services, collection: 'reports' | 'runs' | 'schedules', actor: Identity) => (await s.store.list<any>(collection, actor)).map(r => r.value);
   const revision = (received: unknown, current: number) => { if (received !== current) throw new ReportError('CONFLICT', 'The record changed. Reload it before saving.', 409); };
   add('get', '/sources', async (s, r) => s.platform.sources(r).discover(z.string().max(200).parse(r.query.search ?? ''), z.coerce.number().int().min(1).max(1000).parse(r.query.page ?? 1)));
-  add('post', '/sources/import', async (s, r) => { const input = z.object({ type: z.enum(['dashboard', 'visualization']), id: z.string().min(1).max(1000) }).strict().parse(r.body); return s.platform.sources(r).import(input.type, input.id); });
+  add('post', '/sources/import', async (s, r) => { const input = z.object({ type: z.enum(['dashboard', 'visualization', 'map']), id: z.string().min(1).max(1000) }).strict().parse(r.body); return s.platform.sources(r).import(input.type, input.id); });
   add('get', '/reports', async (s, _r, actor) => (await ownedList(s, 'reports', actor)).map(({ id, title, revision, updatedAt }) => ({ id, title, revision, updatedAt })));
   add('get', '/reports/{id}', async (s, r, actor) => (await ownerRecord<Report>(s, 'reports', r.params.id, actor)).value);
   add('post', '/reports/{id}/authorize', async (s, r, actor) => {
