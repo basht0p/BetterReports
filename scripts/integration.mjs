@@ -89,6 +89,9 @@ try {
 await put('roles/betterreports_fixture_readonly', { cluster_permissions: ['cluster_composite_ops'], index_permissions: [{ index_patterns: ['br-fixture-*'], allowed_actions: ['read'], dls: JSON.stringify({ term: { environment: 'production' } }) }], tenant_permissions: [{ tenant_patterns: ['operations'], allowed_actions: ['kibana_all_read'] }] });
 await put('rolesmapping/betterreports_fixture_readonly', { users: ['report_other'] });
 await put('rolesmapping/betterreports_fixture', { users: ['report_owner'] });
+// The standalone companion suite leaves its own write-capable fixture role mapped.
+const previousCompanionMapping = await request('os', '/_plugins/_security/api/rolesmapping/companion_owner', 'GET', undefined, 'admin', '').then(result => result.companion_owner, error => { if (error.status === 404) return undefined; throw error; });
+await put('rolesmapping/companion_owner', { users: [] });
 try {
   const readonly = await api('/context', 'GET', undefined, 'report_other'); assert.equal(readonly.canWrite, false);
   assert.ok((await api('/reports', 'GET', undefined, 'report_other')).some(item => item.id === report.id && !item.canEdit && item.canRun && !item.canClone));
@@ -98,6 +101,8 @@ try {
 } finally {
   await put('rolesmapping/betterreports_fixture', { users: ['report_owner', 'report_other'] });
   await put('rolesmapping/betterreports_fixture_readonly', { users: [] });
+  if (previousCompanionMapping) await put('rolesmapping/companion_owner', { users: previousCompanionMapping.users ?? [], backend_roles: previousCompanionMapping.backend_roles ?? [], hosts: previousCompanionMapping.hosts ?? [], and_backend_roles: previousCompanionMapping.and_backend_roles ?? [] });
+  else await request('os', '/_plugins/_security/api/rolesmapping/companion_owner', 'DELETE', undefined, 'admin', '');
 }
 const queued = await api(`/reports/${report.id}/runs`, 'POST', {});
 const finished = await wait('Rendered run', async () => { const run = await api(`/runs/${queued.runId}`); if (run.status === 'failed') throw Object.assign(new Error(JSON.stringify(run.error)), { fatal: true }); return run.status === 'complete' ? run : false; }, 120);
