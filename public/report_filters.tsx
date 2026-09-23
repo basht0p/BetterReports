@@ -2,14 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { EuiCallOut } from '@elastic/eui';
 import { ReportInput } from '../common/model';
 import { normalizeReportFilters } from './platform';
-
-// Rehydrate saved field definitions without fetching or adopting upstream changes.
-export async function snapshotIndexPatterns(data: any, sources: ReportInput['sources']) {
-  const patterns = new Map(sources.map(source => [source.indexPattern.id, source.indexPattern]));
-  return Promise.all([...patterns.values()].map(pattern => data.indexPatterns.create(
-    data.indexPatterns.savedObjectToSpec({ id: pattern.id, attributes: pattern.attributes, references: [] }), true
-  )));
-}
+import { reportFilterIndexPatterns } from './report_filter_patterns';
 
 export function ReportFilters({ data, report, onChange }: {
   data: any; report: ReportInput; onChange: (patch: Partial<ReportInput>) => void;
@@ -20,10 +13,10 @@ export function ReportFilters({ data, report, onChange }: {
   useEffect(() => {
     let cancelled = false;
     setLoading(true); setError('');
-    void snapshotIndexPatterns(data, report.sources).then(result => {
+    void reportFilterIndexPatterns(data, report.sources).then(result => {
       if (!cancelled) { setPatterns(result); setLoading(false); }
     }).catch(() => {
-      if (!cancelled) { setError('Unable to load the saved fields for the filter builder. Reopen the report or refresh its sources.'); setLoading(false); }
+      if (!cancelled) { setError('Unable to load current index pattern fields for the filter builder. Check your data access or refresh the index pattern.'); setLoading(false); }
     });
     return () => { cancelled = true; };
   }, [data, report.sources]);
@@ -37,6 +30,7 @@ export function ReportFilters({ data, report, onChange }: {
       appName="betterReports" useDefaultBehaviors={false} disableTimeRangeTool
       indexPatterns={patterns} query={report.query} filters={normalizeReportFilters(report.filters)}
       showQueryInput showFilterBar showSaveQuery={false} showDatePicker={false} isFilterBarPortable={false}
+      onClearSavedQuery={() => {}}
       onQueryChange={changeQuery} onQuerySubmit={changeQuery}
       onFiltersUpdated={(filters: ReportInput['filters']) => onChange({ filters: normalizeReportFilters(filters) })}
     />}

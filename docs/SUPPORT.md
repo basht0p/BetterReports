@@ -20,9 +20,9 @@ Queries are executed through the platform aggregation and search-source services
 
 Unsupported configurations are rejected with a reason. These include pipeline aggregations, scripted fields, advanced JSON aggregation overrides, other/missing buckets, partial/all-level table rows, percentage axes, logarithmic/multiple value axes, custom axis extents, mixed chart types, table totals, unsupported field formatters, remote sources, rollups, by-value/unsaved panels, and third-party embeddables. Pie charts require one metric. Tables require full width. Gauge/Goal currently require one unbucketed metric; Heat Map requires two bucket dimensions; Tag Cloud requires one terms bucket; Coordinate Map requires one geohash bucket on a `geo_point` field; Region Map requires one terms bucket and the World Countries layer.
 
-There is no planned support for Controls, Markdown, PPL, TSVB, Vega, or VisBuilder. Maps and Timeline are also excluded from 0.0.4. These source types remain explicitly unsupported in the builder.
+There is no planned support for Controls, Markdown, PPL, TSVB, Vega, or VisBuilder. Maps and Timeline remain excluded. These source types remain explicitly unsupported in the builder.
 
-Report charts preserve data series, ordinary stacking, labels, legends, and configured series colors within a document layout. They are not pixel-identical reproductions of the dashboard's interactive controls or grid. Dense labels use chart layout overlap avoidance. The supported configuration checks are deliberately narrower than the complete Dashboards visualization API; extend the checks and corresponding renderer tests together when adding features.
+Report charts preserve data series, ordinary stacking, labels, legends, and configured series colors within a document layout. They are not pixel-identical reproductions of the dashboard's interactive controls or grid. Visible legends use native PDF text beneath the chart, so long legend labels do not overlap graphics. Dashboard-content sections can hide legends. The supported configuration checks are deliberately narrower than the complete Dashboards visualization API; extend the checks and corresponding renderer tests together when adding features.
 
 ## Documents
 

@@ -15,17 +15,21 @@
 
 All execution results and scheduling metadata are stored in `.better-reports-v1-{reports,schedules,runs,artifacts}`. Index mappings intentionally exclude report bodies and PDF data from indexing. OpenSearch sequence numbers and primary terms guard updates. The dedicated internal storage identity is separate from the restricted worker identity.
 
+The native filter picker fetches current, authorized index-pattern field metadata without changing the saved report snapshots. Report queries continue to use the saved source configuration until explicit refresh.
+
 The source adapter uses 3.8.0 `search.searchSource.asScoped`, `search.aggs.asScopedToClient`, `indexPatternsServiceFactory`, and `tabifyAggResponse`. Field definitions and field format mappings are taken from the imported snapshot. Interactive source reads verify current access. Scheduled queries use the authorized snapshots and do not require a new SAML session. Grants are stored separately in the protected `.better-reports-grants-v1` system index and have no expiration.
 
 ## API
 
-All routes start with `/api/better_reports`, require authentication, and enforce the current owner and tenant unless explicitly designated administrator-only. JSON bodies use schemas from `common/model.ts`.
+All routes start with `/api/better_reports` and require authentication. Report definitions use tenant scope; writes require current tenant write permission. Private-tenant definitions also retain an owner check. PDFs, run history, and schedules keep owner-and-tenant checks. Global-tenant administrators can list all-tenant report metadata, but must switch tenants before report actions. JSON bodies use schemas from `common/model.ts`.
 
 | Method | Route | Behavior |
 |---|---|---|
 | GET | `/sources?search=&page=1` | Discover accessible dashboard/visualization sources |
 | POST | `/sources/import` | Import `{type,id}`; return supported snapshots and per-panel errors |
-| GET, POST | `/reports` | List summaries or create a report |
+| GET | `/context` | Current tenant capabilities and all-tenant inventory status |
+| GET, POST | `/reports` | List branded tenant summaries or create a report |
+| POST | `/reports/{id}/clone` | Copy a definition using `{revision}` without grants, schedules, or artifacts |
 | GET, PUT, DELETE | `/reports/{id}` | Read, replace using `{revision,report}`, or delete |
 | POST | `/reports/{id}/refresh` | Refresh saved source snapshots using `{revision}` |
 | POST | `/preview` | Queue an unsaved report body and return `{runId}` |
@@ -56,6 +60,8 @@ The initial schema uses version 1 indices and report `schemaVersion: 1`. Future 
 ## Companion grant API
 
 All companion routes use POST under `/_plugins/_better_reports/` and have individual `cluster:admin/betterreports/<operation>` transport permissions. `authorize` accepts compiled aggregation queries and captures identity from Security's authenticated thread context; it does not accept owner or role parameters. `execute` accepts a grant ID, revision fingerprint and absolute reporting interval. `check` validates revocation/fingerprint. `list` and `revoke` enforce owner or named tenant-manager role plus current tenant access. No general query proxy or impersonation endpoint is exposed.
+
+The worker-only `invalidate` action retires a persistent grant by exact ID and fingerprint after an authorized shared-report mutation. It does not accept replacement identities or queries. Changing, refreshing, deleting, or reauthorizing a shared report retires its previous grant and pauses linked schedules. The grant records its authorizer separately from the report creator; scheduled execution and its private run history belong to that authorizer. Manual runs create temporary permissions for the current caller. Clones never carry over grants.
 
 Dashboards routes add `POST /reports/{id}/authorize` with `{revision}`, `GET /grants`, and `POST /grants/{id}/revoke`. A saved report's authorization is invalidated on edits and refresh. Legacy reports require authorization before scheduled execution. The grant lifetime is explicitly indefinite; IdP membership changes are not automatic grant revocation. Current definitions of captured OpenSearch roles continue to govern data access.
 

@@ -27,6 +27,7 @@
       "cluster:admin/betterreports/execute",
       "cluster:admin/betterreports/check",
       "cluster:admin/betterreports/release",
+      "cluster:admin/betterreports/invalidate",
       "cluster:admin/betterreports/send"
     ],
     "index_permissions": [],

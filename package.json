@@ -1,6 +1,6 @@
 {
   "name": "better-reports",
-  "version": "0.0.4",
+  "version": "0.1.0",
   "private": true,
   "description": "Vector PDF reports and scheduled email for OpenSearch Dashboards 3.8.0",
   "license": "Apache-2.0",
