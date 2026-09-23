@@ -3,9 +3,10 @@ import { parseJson, SourceService } from './sources';
 import { GrantClient, grantFingerprint } from './grants';
 import { resolveRange } from './time';
 
-export function assertTenantAccess(authInfo: any, tenant: string) {
+export function assertTenantAccess(authInfo: any, tenant: string, write = false) {
   const name = tenant === '' ? 'global_tenant' : tenant === '__user__' ? authInfo.user_name : tenant;
   if (!Object.prototype.hasOwnProperty.call(authInfo.tenants ?? {}, name)) throw new ReportError('TENANT_FORBIDDEN', 'The owner no longer has access to this tenant.', 403);
+  if (write && authInfo.tenants[name] !== true) throw new ReportError('TENANT_READ_ONLY', 'Write access to this tenant is required.', 403);
 }
 
 // All platform-specific calls live here. Contract paths are verified by
@@ -25,6 +26,14 @@ export class PlatformAdapter {
     assertTenantAccess(body, tenant);
     return { owner: body.user_name, tenant };
   }
+  async context(request: any, adminRoles: string[]) {
+    const identity = await this.identity(request);
+    const { body } = await this.core.opensearch.client.asScoped(request).asCurrentUser.transport.request({ method: 'GET', path: '/_plugins/_security/authinfo' });
+    if (body.user_name !== identity.owner) throw new ReportError('IDENTITY_MISMATCH', 'Authentication identity changed.', 403);
+    assertTenantAccess(body, identity.tenant);
+    const name = identity.tenant === '' ? 'global_tenant' : identity.tenant === '__user__' ? identity.owner : identity.tenant;
+    return { ...identity, canWrite: body.tenants[name] === true, allTenants: identity.tenant === '' && (body.roles ?? []).some((role: string) => adminRoles.includes(role)) };
+  }
   async isAdmin(request: any, roles: string[]) {
     const { body } = await this.core.opensearch.client.asScoped(request).asCurrentUser.transport.request({ method: 'GET', path: '/_plugins/_security/authinfo' });
     return (body.roles ?? []).some((role: string) => roles.includes(role));
@@ -35,7 +44,7 @@ export class PlatformAdapter {
     const scoped = request;
     if (request) {
       const actor = await this.identity(request);
-      if (actor.owner !== report.owner || actor.tenant !== report.tenant) throw new ReportError('FORBIDDEN', 'Report identity does not match this session.', 403);
+      if (actor.tenant !== report.tenant || (report.tenant === '__user__' && actor.owner !== report.owner)) throw new ReportError('FORBIDDEN', 'Report tenant does not match this session.', 403);
     }
     await this.sources(scoped).authorize(report.sources);
     return scoped;
@@ -50,7 +59,7 @@ export class PlatformAdapter {
     try { settings = (await this.core.savedObjects.getScopedClient(request).get('config', '3.8.0')).attributes; } catch (e: any) { if (e?.output?.statusCode !== 404) throw e; }
     const fingerprint = grantFingerprint(report);
     const grant = await this.grants.call('authorize', { reportId: report.id, title: report.title, persistent, revision: report.revision, fingerprint, panels, ...interval }, request);
-    return { ...report, grant: { id: grant.id, fingerprint, createdAt: grant.createdAt, authorization: 'until_revoked', temporary: !persistent, specs, settings } };
+    return { ...report, grant: { id: grant.id, fingerprint, createdAt: grant.createdAt, authorization: 'until_revoked', temporary: !persistent, authorizedBy: grant.owner, specs, settings } };
   }
   async release(run: Run) {
     if (run.report.grant?.temporary) {

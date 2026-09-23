@@ -72,6 +72,35 @@ test('revoked source permissions fail without rendering or email', async () => {
   const id = await runner.enqueue(report, 'manual'); await runner.tick(); await waitUntil(async () => (await store.get<Run>('runs', id))?.value.status === 'failed'); assert.equal((await store.list('artifacts')).length, 0); runner.stop();
 });
 
+test('shared scheduled report keeps grant authorizer as run and artifact owner', async () => {
+  const store = new MemoryStore();
+  const shared = { ...report, grant: { id: 'bob-grant', fingerprint: 'fixture', createdAt: new Date().toISOString(), authorization: 'until_revoked' as const, authorizedBy: 'bob', specs: {}, settings: {} } };
+  await store.create('reports', shared.id, shared);
+  const nextAt = new Date(Date.now() - 60000).toISOString();
+  const schedule: Schedule = { id: 'bob-schedule', revision: 1, reportId: shared.id, owner: 'bob', tenant: shared.tenant, cron: '* * * * *', timezone: 'UTC', enabled: true, senderId: 'sender', recipientGroupIds: ['group'], subject: 'Report', message: '', skipped: 0, nextAt, updatedAt: nextAt };
+  await store.create('schedules', schedule.id, schedule);
+  const runner = new Runner(store, executor, render, { send: async () => {} });
+  await runner.tick();
+  await waitUntil(async () => (await store.list<Run>('runs')).some(r => r.value.status === 'complete'));
+  const run = (await store.list<Run>('runs'))[0].value;
+  assert.equal(run.report.owner, report.owner);
+  assert.equal(run.owner, 'bob');
+  assert.equal((await store.get<any>('artifacts', run.artifactId!))?.value.owner, 'bob');
+  runner.stop();
+});
+
+test('manual run keeps report creator provenance and caller-owned history', async () => {
+  const store = new MemoryStore();
+  const runner = new Runner(store, executor, render, { send: async () => {} });
+  const id = await runner.enqueue(report, 'manual', new Date(), undefined, undefined, undefined, 'bob');
+  const queued = (await store.get<Run>('runs', id))!.value;
+  assert.equal(queued.report.owner, 'alice');
+  assert.equal(queued.owner, 'bob');
+  await assert.rejects(runner.cancel(id, { owner: 'alice', tenant: report.tenant }), /Record not found/);
+  await runner.cancel(id, { owner: 'bob', tenant: report.tenant });
+  runner.stop();
+});
+
 test('graceful shutdown preserves a generating lease for another instance to recover', async () => {
   const store = new MemoryStore(); let began = false;
   const first = new Runner(store, { authorize: async () => ({}), execute: async (_run, signal) => { began = true; return new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(new Error('shutdown')), { once: true })); } }, render, { send: async () => {} });

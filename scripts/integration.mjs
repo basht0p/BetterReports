@@ -7,7 +7,7 @@ import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { createHash } from 'node:crypto';
 const secrets = JSON.parse(await readFile('.platform/dev-secrets.json', 'utf8'));
 function request(service, path, method = 'GET', body, username = 'admin', tenant = 'operations') {
-  const password = ({ admin: secrets.admin, report_owner: secrets.owner, report_other: secrets.other })[username];
+  const password = ({ admin: secrets.admin, report_owner: secrets.owner, report_other: secrets.other, betterreports_runner: secrets.runner })[username];
   return new Promise((resolve, reject) => {
     const client = service === 'os' ? https : http;
     const req = client.request({ hostname: '127.0.0.1', port: service === 'os' ? 19400 : service === 'osd2' ? 15602 : 15601, path: service === 'os' ? path : `/br${path}`, method, rejectUnauthorized: false, timeout: 30000,
@@ -48,8 +48,62 @@ const dataCheck = await request('os', '/br-fixture-data/_search', 'POST', { size
 const imported = await api('/sources/import', 'POST', { type: 'visualization', id: 'br-fixture-metric' }); assert.ok(imported[0].source, JSON.stringify(imported));
 const source = imported[0].source;
 const report = await api('/reports', 'POST', { title: 'Integration report', timezone: 'UTC', timeRange: { from: '2026-09-19T00:00:00Z', to: '2026-09-21T00:00:00Z' }, query: { language: 'kuery', query: '' }, filters: [], branding: { organization: 'BetterReports integration', header: 'Synthetic data', footer: 'Test fixture', color: '#2457a7', alignment: 'left', showPeriod: true, showGenerated: true, showPageNumbers: true }, sources: [source], sections: [{ id: 'metric', kind: 'panels', columns: 1, sources: [source.key] }] });
-await assert.rejects(api(`/reports/${report.id}`, 'GET', undefined, 'report_other'), error => error.status === 404);
+const peerList = await api('/reports', 'GET', undefined, 'report_other');
+assert.ok(peerList.some(item => item.id === report.id && item.canEdit && item.canRun && item.canClone));
+const peerReport = await api(`/reports/${report.id}`, 'GET', undefined, 'report_other');
+assert.equal(peerReport.owner, 'report_owner');
+assert.equal(peerReport.grant, undefined);
+const clone = await api(`/reports/${report.id}/clone`, 'POST', { revision: report.revision }, 'report_other');
+assert.equal(clone.owner, 'report_other'); assert.equal(clone.tenant, 'operations'); assert.equal(clone.title, 'Integration report (copy)'); assert.equal(clone.grant, undefined);
+assert.deepEqual(clone.sources, report.sources); assert.deepEqual(clone.sections, report.sections); assert.deepEqual(clone.branding, report.branding);
+assert.equal((await api(`/reports/${report.id}`)).owner, 'report_owner');
 await assert.rejects(api(`/reports/${report.id}`, 'GET', undefined, 'report_owner', 'finance'), error => error.status === 404);
+await assert.rejects(api(`/reports/${report.id}/clone`, 'POST', { revision: report.revision }, 'report_other', 'finance'), error => error.status === 404);
+const ownerContext = await api('/context'); assert.deepEqual({ owner: ownerContext.owner, tenant: ownerContext.tenant, canWrite: ownerContext.canWrite, allTenants: ownerContext.allTenants }, { owner: 'report_owner', tenant: 'operations', canWrite: true, allTenants: false });
+const globalContext = await api('/context', 'GET', undefined, 'admin', ''); assert.equal(globalContext.allTenants, true);
+const globalInventory = await api('/reports', 'GET', undefined, 'admin', '');
+assert.ok(globalInventory.some(item => item.id === report.id && item.tenant === 'operations' && item.requiresTenantSwitch && !item.canRun && !item.canEdit && !item.canClone));
+await assert.rejects(api(`/reports/${report.id}`, 'GET', undefined, 'admin', ''), error => error.status === 404);
+const privateReport = await api('/reports', 'POST', { ...report, title: 'Private fixture', sources: [], sections: [{ id: 'private-text', kind: 'text', text: 'Private', style: 'body', bold: false, alignment: 'left' }], id: undefined, owner: undefined, tenant: undefined, revision: undefined, schemaVersion: undefined, updatedAt: undefined }, 'report_owner', '__user__');
+assert.equal(privateReport.tenant, '__user__');
+assert.ok((await api('/reports', 'GET', undefined, 'report_owner', '__user__')).some(item => item.id === privateReport.id));
+assert.ok(!(await api('/reports', 'GET', undefined, 'report_other', '__user__')).some(item => item.id === privateReport.id));
+await assert.rejects(api(`/reports/${privateReport.id}`, 'GET', undefined, 'report_other', '__user__'), error => error.status === 404);
+await assert.rejects(api(`/reports/${privateReport.id}/clone`, 'POST', { revision: privateReport.revision }, 'report_other', '__user__'), error => error.status === 404);
+assert.ok((await api('/reports', 'GET', undefined, 'admin', '')).some(item => item.id === privateReport.id && item.requiresTenantSwitch && !item.canRun));
+await put('roles/betterreports_fixture_peer', { cluster_permissions: ['cluster_composite_ops'], index_permissions: [{ index_patterns: ['br-fixture-*'], allowed_actions: ['read'], dls: JSON.stringify({ range: { bytes: { lt: 300 } } }) }], tenant_permissions: [{ tenant_patterns: ['operations', 'finance'], allowed_actions: ['kibana_all_write'] }] });
+await put('rolesmapping/betterreports_fixture_peer', { users: ['report_other'] });
+await put('rolesmapping/betterreports_fixture', { users: ['report_owner'] });
+try {
+  const peerQueued = await api(`/reports/${report.id}/runs`, 'POST', {}, 'report_other');
+  const peerFinished = await wait('Peer rendered run', async () => { const run = await api(`/runs/${peerQueued.runId}`, 'GET', undefined, 'report_other'); if (run.status === 'failed') throw Object.assign(new Error(JSON.stringify(run.error)), { fatal: true }); return run.status === 'complete' ? run : false; }, 120);
+  assert.equal(peerFinished.owner, 'report_other'); assert.equal(peerFinished.report, undefined);
+  assert.ok(!(await api('/runs')).some(item => item.id === peerFinished.id));
+  await assert.rejects(api(`/runs/${peerFinished.id}/pdf?encoding=base64`), error => error.status === 404);
+  const peerPdf = await api(`/runs/${peerFinished.id}/pdf?encoding=base64`, 'GET', undefined, 'report_other');
+  assert.match(await textOf(Buffer.from(peerPdf.pdf, 'base64')), /Count 3/);
+} finally {
+  await put('rolesmapping/betterreports_fixture', { users: ['report_owner', 'report_other'] });
+  await put('rolesmapping/betterreports_fixture_peer', { users: [] });
+}
+await put('roles/betterreports_fixture_readonly', { cluster_permissions: ['cluster_composite_ops'], index_permissions: [{ index_patterns: ['br-fixture-*'], allowed_actions: ['read'], dls: JSON.stringify({ term: { environment: 'production' } }) }], tenant_permissions: [{ tenant_patterns: ['operations'], allowed_actions: ['kibana_all_read'] }] });
+await put('rolesmapping/betterreports_fixture_readonly', { users: ['report_other'] });
+await put('rolesmapping/betterreports_fixture', { users: ['report_owner'] });
+// The standalone companion suite leaves its own write-capable fixture role mapped.
+const previousCompanionMapping = await request('os', '/_plugins/_security/api/rolesmapping/companion_owner', 'GET', undefined, 'admin', '').then(result => result.companion_owner, error => { if (error.status === 404) return undefined; throw error; });
+await put('rolesmapping/companion_owner', { users: [] });
+try {
+  const readonly = await api('/context', 'GET', undefined, 'report_other'); assert.equal(readonly.canWrite, false);
+  assert.ok((await api('/reports', 'GET', undefined, 'report_other')).some(item => item.id === report.id && !item.canEdit && item.canRun && !item.canClone));
+  await assert.rejects(api('/reports', 'POST', { title: 'Denied' }, 'report_other'), error => error.status === 403);
+  await assert.rejects(api(`/reports/${report.id}/clone`, 'POST', { revision: report.revision }, 'report_other'), error => error.status === 403);
+  await assert.rejects(api(`/reports/${report.id}`, 'PUT', { revision: report.revision, report: {} }, 'report_other'), error => error.status === 403);
+} finally {
+  await put('rolesmapping/betterreports_fixture', { users: ['report_owner', 'report_other'] });
+  await put('rolesmapping/betterreports_fixture_readonly', { users: [] });
+  if (previousCompanionMapping) await put('rolesmapping/companion_owner', { users: previousCompanionMapping.users ?? [], backend_roles: previousCompanionMapping.backend_roles ?? [], hosts: previousCompanionMapping.hosts ?? [], and_backend_roles: previousCompanionMapping.and_backend_roles ?? [] });
+  else await request('os', '/_plugins/_security/api/rolesmapping/companion_owner', 'DELETE', undefined, 'admin', '');
+}
 const queued = await api(`/reports/${report.id}/runs`, 'POST', {});
 const finished = await wait('Rendered run', async () => { const run = await api(`/runs/${queued.runId}`); if (run.status === 'failed') throw Object.assign(new Error(JSON.stringify(run.error)), { fatal: true }); return run.status === 'complete' ? run : false; }, 120);
 await wait('Temporary permission cleanup', async () => (await api(`/runs/${finished.id}`)).grantReleased === true, 90);
@@ -108,6 +162,8 @@ const baselineMailCount = (await (await fetch('http://127.0.0.1:18081')).json())
 const latestForGrant = await api(`/reports/${report.id}`); await api(`/reports/${report.id}/authorize`, "POST", { revision: latestForGrant.revision });
 const sender = await request('os', '/_plugins/_notifications/configs', 'POST', { config: { name: 'BetterReports fixture sender', config_type: 'smtp_account', is_enabled: true, smtp_account: { host: 'smtp', port: 2525, method: 'none', from_address: 'reports@example.test' } } }, 'report_owner');
 const group = await request('os', '/_plugins/_notifications/configs', 'POST', { config: { name: 'BetterReports fixture recipients', config_type: 'email_group', is_enabled: true, email_group: { recipient_list: [{ recipient: 'fixture@example.test' }] } } }, 'report_owner');
+assert.equal((await api(`/reports/${report.id}`, 'GET', undefined, 'report_other')).grant, undefined);
+await assert.rejects(api('/schedules', 'POST', { reportId: report.id, cron: '* * * * *', timezone: 'UTC', enabled: true, senderId: sender.config_id, recipientGroupIds: [group.config_id], subject: 'Denied peer schedule', message: '' }, 'report_other'), error => error.status === 403 && error.message.includes('Authorize this report yourself'));
 const notificationOptions = await api('/notification-options'); assert.ok(notificationOptions.senders.some(option => option.id === sender.config_id)); assert.ok(notificationOptions.groups.some(option => option.id === group.config_id));
 const schedule = await api('/schedules', 'POST', { reportId: report.id, cron: '* * * * *', timezone: 'UTC', enabled: true, senderId: sender.config_id, recipientGroupIds: [group.config_id], subject: 'BetterReports integration', message: 'Synthetic test report' });
 const mail = await wait('Browser-independent scheduled email', async () => {
@@ -120,9 +176,21 @@ await api(`/grants/${authorizedReport.grant.id}/revoke`, 'POST', {});
 assert.equal((await api('/schedules')).find(s => s.id === schedule.id).enabled, false, 'Revocation pauses dependent schedules');
 await assert.rejects(api(`/schedules/${schedule.id}/run`, 'POST', {}), error => error.status === 403);
 await api(`/reports/${report.id}/authorize`, 'POST', { revision: authorizedReport.revision });
+const peerEditInput = { ...definition, title: 'Integration report shared edit' };
+const latestBeforePeerEdit = await api(`/reports/${report.id}`);
+const linkedGrantId = latestBeforePeerEdit.grant.id;
+await api(`/reports/${report.id}`, 'PUT', { revision: latestBeforePeerEdit.revision, report: peerEditInput }, 'report_other');
+assert.equal((await api(`/reports/${report.id}`)).grant, undefined);
+assert.equal((await api('/schedules')).find(s => s.id === schedule.id).enabled, false);
+await assert.rejects(request('os', '/_plugins/_better_reports/check', 'POST', { id: linkedGrantId, fingerprint: latestBeforePeerEdit.grant.fingerprint }, 'betterreports_runner'), error => error.status === 403);
 await assert.rejects(request('os', '/.better-reports-v1-artifacts/_search', 'POST', { size: 1 }, 'report_owner'), error => error.status === 403);
+await put('rolesmapping/companion_owner', { users: [] });
 await put('rolesmapping/betterreports_fixture', { users: ['report_other'] });
 try { await assert.rejects(api(`/runs/${finished.id}/pdf?encoding=base64`), error => error.status === 403); }
-finally { await put('rolesmapping/betterreports_fixture', { users: ['report_owner', 'report_other'] }); }
+finally {
+  await put('rolesmapping/betterreports_fixture', { users: ['report_owner', 'report_other'] });
+  if (previousCompanionMapping) await put('rolesmapping/companion_owner', { users: previousCompanionMapping.users ?? [], backend_roles: previousCompanionMapping.backend_roles ?? [], hosts: previousCompanionMapping.hosts ?? [], and_backend_roles: previousCompanionMapping.and_backend_roles ?? [] });
+  else await request('os', '/_plugins/_security/api/rolesmapping/companion_owner', 'DELETE', undefined, 'admin', '');
+}
 await writeFile('output/integration/results.json', JSON.stringify({ platform: '3.8.0', senderId: sender.config_id, recipientGroupIds: [group.config_id], distributedWorkers, reportId: report.id, runId: finished.id, pagesExpected: 1, sha256: artifact.sha256, scheduledEmails: mail.count - baselineMailCount, allTypesRunId: allRun.id, dlsCount: 12, pinnedFreshCount: 13, refreshedSum: 7800, checkedAt: new Date().toISOString() }, null, 2));
 console.log('PASS: 3.8.0 installation, source import, PDF generation, owner/tenant isolation, artifact authorization, and scheduled Notifications PDF email. Evidence: output/integration/.');

@@ -7,7 +7,7 @@ import { countryName, geohashCenter } from './geo';
 
 const vfs = require('pdfmake/build/vfs_fonts');
 const fonts = { Roboto: { normal: Buffer.from(vfs['Roboto-Regular.ttf'], 'base64'), bold: Buffer.from(vfs['Roboto-Medium.ttf'], 'base64'), italics: Buffer.from(vfs['Roboto-Italic.ttf'], 'base64'), bolditalics: Buffer.from(vfs['Roboto-MediumItalic.ttf'], 'base64') } };
-export function chartOption(panel: PanelData, color: string): any {
+export function chartOption(panel: PanelData, color: string, width = 540, hideLegend = false): any {
   const metricStart = panel.bucketCount;
   const segment = Math.max(0, panel.schemas.indexOf('segment'));
   const categories = [...new Set(panel.rows.map(row => panel.bucketCount ? row[segment]?.text ?? 'Total' : 'Total'))];
@@ -33,8 +33,8 @@ export function chartOption(panel: PanelData, color: string): any {
     const missing = panel.rows.filter((_, i) => !matches[i].name).map(row => row[0].text);
     if (missing.length) throw new ReportError('UNSUPPORTED_CONFIGURATION', `Region map values do not match World Countries: ${missing.slice(0, 5).join(', ')}.`);
     const values = matches.map(item => item.value);
-    return { animation: false, visualMap: { show: true, min: Math.min(...values), max: Math.max(...values), left: 0, bottom: 0, inRange: { color: ['#e8f1f9', color] } },
-      series: [{ type: 'map', map: 'better-reports-world', roam: false, label: { show: false }, itemStyle: { borderColor: '#a0aec0', borderWidth: 0.3 }, emphasis: { disabled: true }, data: matches }] };
+    return { animation: false, visualMap: { show: !hideLegend, min: Math.min(...values), max: Math.max(...values), orient: 'horizontal', left: 'center', bottom: 4, inRange: { color: ['#e8f1f9', color] } },
+      series: [{ type: 'map', map: 'better-reports-world', top: 10, bottom: hideLegend ? 10 : 50, roam: false, label: { show: false }, itemStyle: { borderColor: '#a0aec0', borderWidth: 0.3 }, emphasis: { disabled: true }, data: matches }] };
   }
   if (panel.type === 'tile_map') {
     const points = panel.rows.map(row => ({ name: row[0].text, value: [...geohashCenter(String(row[0].value ?? row[0].text)), Number(row[metricStart]?.value ?? 0)] }));
@@ -59,18 +59,53 @@ export function chartOption(panel: PanelData, color: string): any {
     const x = [...new Set(panel.rows.map(row => row[0].text))];
     const y = [...new Set(panel.rows.map(row => row[1].text))];
     const values = panel.rows.map(row => Number(row[metricStart]?.value ?? 0));
-    return { animation: false, grid: { top: 20, left: 70, right: 30, bottom: 65, containLabel: true }, xAxis: { type: 'category', data: x, axisLabel: { fontSize: 8, hideOverlap: true } }, yAxis: { type: 'category', data: y, axisLabel: { fontSize: 8, hideOverlap: true } },
-      visualMap: { show: true, min: Math.min(...values), max: Math.max(...values), calculable: false, orient: 'horizontal', left: 'center', bottom: 0, inRange: { color: ['#e8f1f9', color] } },
+    return { animation: false, grid: { top: 20, left: 70, right: 30, bottom: hideLegend ? 30 : 75, containLabel: true }, xAxis: { type: 'category', data: x, axisLabel: { fontSize: 8, hideOverlap: true } }, yAxis: { type: 'category', data: y, axisLabel: { fontSize: 8, hideOverlap: true } },
+      visualMap: { show: !hideLegend, min: Math.min(...values), max: Math.max(...values), calculable: false, orient: 'horizontal', left: 'center', bottom: 0, inRange: { color: ['#e8f1f9', color] } },
       series: [{ type: 'heatmap', data: panel.rows.map(row => [x.indexOf(row[0].text), y.indexOf(row[1].text), Number(row[metricStart]?.value ?? 0)]), label: { show: panel.params.showValues === true, fontSize: 9 } }] };
   }
-  if (panel.type === 'pie') return { animation: false, color: palette, textStyle: { fontFamily: 'Roboto' }, legend: { show: panel.params.addLegend !== false, bottom: 0, type: 'plain', textStyle: { fontSize: 9 } }, series: [{ type: 'pie', radius: panel.params.isDonut ? ['35%', '65%'] : '65%', center: ['50%', '43%'], label: { show: panel.params.labels?.show !== false, fontSize: 10, textBorderWidth: 0, color: '#243247', formatter: (item: any) => `${item.name}: ${panel.rows[item.dataIndex]?.[metricStart]?.text ?? item.value}` }, data: panel.rows.map(row => ({ name: row.slice(0, metricStart).map(c => c.text).join(' / '), value: row[metricStart]?.value, itemStyle: panel.params?.visColors?.[row[0]?.text] ? { color: panel.params.visColors[row[0].text] } : undefined })) }] };
+  if (panel.type === 'pie') return { animation: false, color: palette, textStyle: { fontFamily: 'Roboto' }, legend: { show: false }, series: [{ type: 'pie', radius: panel.params.isDonut ? ['35%', '55%'] : '55%', center: ['50%', '50%'], avoidLabelOverlap: true, labelLayout: { hideOverlap: true }, label: { show: panel.params.labels?.show !== false && (hideLegend || panel.params.addLegend === false || panel.rows.length <= (width < 300 ? 6 : 12)), fontSize: 10, textBorderWidth: 0, color: '#243247', formatter: (item: any) => {
+    const name = String(item.name ?? ''); const max = width < 300 ? 14 : 32;
+    return `${name.length > max ? `${name.slice(0, max - 1)}…` : name}: ${panel.rows[item.dataIndex]?.[metricStart]?.text ?? item.value}`;
+  } }, data: panel.rows.map(row => ({ name: row.slice(0, metricStart).map(c => c.text).join(' / '), value: row[metricStart]?.value, itemStyle: panel.params?.visColors?.[row[0]?.text] ? { color: panel.params.visColors[row[0].text] } : undefined })) }] };
   const horizontal = panel.type === 'horizontal_bar';
   return { animation: false, color: palette, textStyle: { fontFamily: 'Roboto' }, grid: { top: 40, left: horizontal ? 95 : 48, right: 16, bottom: 60, containLabel: true },
-    legend: { show: panel.params.addLegend !== false, bottom: 0, textStyle: { fontSize: 9 } },
+    legend: { show: false },
     xAxis: horizontal ? { type: 'value', ...(panel.axis ? { min: panel.axis.min, max: panel.axis.max, interval: panel.axis.interval } : {}), axisLabel: { fontSize: 9 } } : { type: 'category', data: categories, axisLabel: { fontSize: 9, hideOverlap: true } },
     yAxis: horizontal ? { type: 'category', data: categories, axisLabel: { fontSize: 9, hideOverlap: true } } : { type: 'value', ...(panel.axis ? { min: panel.axis.min, max: panel.axis.max, interval: panel.axis.interval } : {}), axisLabel: { fontSize: 9, ...(panel.axis ? { formatter: (value: number) => panel.axis!.labels[Number(value.toPrecision(12)).toString()] ?? String(value) } : {}) }, name: panel.columns[metricStart], nameGap: 12, nameTextStyle: { fontSize: 9 } }, series };
 }
-function panelNode(panel: PanelData, width: number, color: string): any {
+interface LegendEntry { name: string; color: string; }
+export function legendEntries(panel: PanelData, option: any): LegendEntry[] {
+  if (panel.params.addLegend === false || (panel.type !== 'pie' && !['line', 'area', 'histogram', 'horizontal_bar', 'vertical_bar'].includes(panel.type))) return [];
+  const palette: string[] = option.color;
+  const entries = panel.type === 'pie' ? option.series[0].data : option.series;
+  return entries.map((entry: any, index: number) => {
+    const rgba = echarts.color.parse(entry.itemStyle?.color ?? palette[index % palette.length]);
+    const alpha = rgba?.[3] ?? 1;
+    const hex = (channel: number) => Math.round(channel * alpha + 255 * (1 - alpha)).toString(16).padStart(2, '0');
+    return { name: String(entry.name), color: rgba ? `#${hex(rgba[0])}${hex(rgba[1])}${hex(rgba[2])}` : palette[index % palette.length] };
+  });
+}
+function legendNode(entries: LegendEntry[], width: number): any[] {
+  // pdfmake does not reliably break a long unspaced token inside a narrow column.
+  const wrap = (name: string) => name.replace(/\S{26,}/gu, token => Array.from(token).reduce((parts: string[], character) => {
+    if (!parts.length || Array.from(parts[parts.length - 1]).length >= 25) parts.push(character);
+    else parts[parts.length - 1] += character;
+    return parts;
+  }, []).join('\n'));
+  const entryNode = (entry: LegendEntry): any => ({ columns: [
+    { width: 11, canvas: [{ type: 'rect', x: 0, y: 2, w: 8, h: 8, color: entry.color }] },
+    { width: '*', text: wrap(entry.name), fontSize: 9, lineHeight: 1.15 }
+  ], columnGap: 3, margin: [0, 0, 0, 5] });
+  const rows: any[] = [];
+  for (let index = 0; index < entries.length; index += width > 300 ? 2 : 1) {
+    rows.push(width > 300 ? { columns: [
+      { width: (width - 12) / 2, ...entryNode(entries[index]) },
+      entries[index + 1] ? { width: (width - 12) / 2, ...entryNode(entries[index + 1]) } : { width: (width - 12) / 2, text: '' }
+    ], columnGap: 12 } : entryNode(entries[index]));
+  }
+  return rows;
+}
+function panelNode(panel: PanelData, width: number, color: string, hideLegend = false): any {
   if (panel.type === 'table' && Number.isInteger(panel.params.sort?.columnIndex)) {
     const index = panel.params.sort.columnIndex, direction = panel.params.sort.direction === 'desc' ? -1 : 1;
     if (index >= 0 && index < panel.columns.length) panel = { ...panel, rows: [...panel.rows].sort((a, b) => direction * (typeof a[index].value === 'number' && typeof b[index].value === 'number' ? Number(a[index].value) - Number(b[index].value) : a[index].text.localeCompare(b[index].text))) };
@@ -88,7 +123,13 @@ function panelNode(panel: PanelData, width: number, color: string): any {
   }
   if (panel.type === 'pie' && panel.columns.length - panel.bucketCount !== 1) throw new ReportError('UNSUPPORTED_CONFIGURATION', 'Pie charts require exactly one metric.');
   const chart = echarts.init(null, undefined, { renderer: 'svg', ssr: true, width, height: 245 });
-  try { chart.setOption(chartOption(panel, color)); return { unbreakable: true, stack: [title, { svg: chart.renderToSVGString(), width, height: 245 }], margin: [0, 0, 0, 18] }; }
+  try {
+    const option = chartOption(panel, color, width, hideLegend);
+    chart.setOption(option);
+    const body = { unbreakable: true, stack: [title, { svg: chart.renderToSVGString(), width, height: 245 }] };
+    const legend = hideLegend ? [] : legendNode(legendEntries(panel, option), width);
+    return { body, legend };
+  }
   finally { chart.dispose(); }
 }
 export async function renderPdf(run: Run, panels: PanelData[], limits: Limits): Promise<{ pdf: Buffer; pages: number }> {
@@ -105,9 +146,23 @@ export async function renderPdf(run: Run, panels: PanelData[], limits: Limits): 
       const nodes = section.sources.map(key => {
         const panel = panels.find(p => p.key === key);
         if (!panel) throw new ReportError('SOURCE_UNAVAILABLE', 'A selected panel has no query result.');
-        return { ...panelNode(panel, width, branding.color), width };
+        return panelNode(panel, width, branding.color, section.hideLegend);
       });
-      content.push(section.columns === 2 ? { columns: nodes, columnGap: 18, unbreakable: true } : nodes[0]);
+      if (section.columns === 1) {
+        const node = nodes[0];
+        if (!node.body) content.push({ ...node, width });
+        else {
+          content.push({ ...node.body, width, margin: [0, 0, 0, node.legend.length ? 4 : 18] });
+          content.push(...node.legend.map((row: any, index: number) => ({ ...row, unbreakable: true, margin: [0, 0, 0, index === node.legend.length - 1 ? 18 : 0] })));
+        }
+      } else {
+        content.push({ columns: nodes.map(node => ({ ...(node.body ?? node), width })), columnGap: 18, unbreakable: true, margin: [0, 0, 0, 4] });
+        const legends = nodes.map(node => node.legend ?? []);
+        for (let index = 0; index < Math.max(...legends.map(items => items.length)); index++) {
+          content.push({ columns: legends.map(items => items[index] ? { ...items[index], width } : { text: '', width }), columnGap: 18, unbreakable: true,
+            margin: [0, 0, 0, index === Math.max(...legends.map(items => items.length)) - 1 ? 18 : 0] });
+        }
+      }
     }
   }
   const definition: any = {

@@ -47,7 +47,7 @@ import org.opensearch.watcher.ResourceWatcherService;
 public class BetterReportsPlugin extends Plugin implements ActionPlugin, SystemIndexPlugin, IdentityAwarePlugin {
     static final String INDEX = ".better-reports-grants-v1";
     static final String PREFIX = "cluster:admin/betterreports/";
-    static final List<String> OPS = List.of("authorize", "execute", "check", "revoke", "list", "release", "notifications", "send");
+    static final List<String> OPS = List.of("authorize", "execute", "check", "revoke", "list", "release", "invalidate", "notifications", "send");
     private Service service;
     public BetterReportsPlugin(Settings settings) {
         if (!settings.getAsBoolean("plugins.security.system_indices.enabled", false)) throw new IllegalStateException("BetterReports requires plugins.security.system_indices.enabled: true");
@@ -64,7 +64,7 @@ public class BetterReportsPlugin extends Plugin implements ActionPlugin, SystemI
     @Override public void assignSubject(PluginSubject subject) { service.subject = subject; }
     @Override public List<ActionHandler<? extends ActionRequest, ? extends ActionResponse>> getActions() {
         return List.of(new ActionHandler<>(type("authorize"), Authorize.class), new ActionHandler<>(type("execute"), Execute.class),
-            new ActionHandler<>(type("check"), Check.class), new ActionHandler<>(type("revoke"), Revoke.class), new ActionHandler<>(type("list"), ListGrants.class), new ActionHandler<>(type("release"), Release.class), new ActionHandler<>(type("notifications"), Notifications.class), new ActionHandler<>(type("send"), Send.class));
+            new ActionHandler<>(type("check"), Check.class), new ActionHandler<>(type("revoke"), Revoke.class), new ActionHandler<>(type("list"), ListGrants.class), new ActionHandler<>(type("release"), Release.class), new ActionHandler<>(type("invalidate"), Invalidate.class), new ActionHandler<>(type("notifications"), Notifications.class), new ActionHandler<>(type("send"), Send.class));
     }
     static ActionType<Reply> type(String op) { return new ActionType<>(PREFIX + op, Reply::new); }
     @Override public List<RestHandler> getRestHandlers(Settings settings, RestController controller, ClusterSettings clusterSettings,
@@ -116,6 +116,7 @@ public class BetterReportsPlugin extends Plugin implements ActionPlugin, SystemI
     public static class Notifications extends Transport { @Inject public Notifications(TransportService t, ActionFilters f, Service s) { super("notifications", t, f, s); } }
     public static class Send extends Transport { @Inject public Send(TransportService t, ActionFilters f, Service s) { super("send", t, f, s); } }
     public static class Release extends Transport { @Inject public Release(TransportService t, ActionFilters f, Service s) { super("release", t, f, s); } }
+    public static class Invalidate extends Transport { @Inject public Invalidate(TransportService t, ActionFilters f, Service s) { super("invalidate", t, f, s); } }
 
     public static class Service {
         final Client client; final ThreadPool pool; final NamedXContentRegistry registry; PluginSubject subject;
@@ -169,7 +170,7 @@ public class BetterReportsPlugin extends Plugin implements ActionPlugin, SystemI
         }
         Object handle(String op, Map<String,Object> input) throws Exception {
             User caller = actor(); init();
-            if (!Set.of("execute", "check", "release", "send").contains(op)) tenantAccess();
+            if (!Set.of("execute", "check", "release", "invalidate", "send").contains(op)) tenantAccess();
             if (op.equals("notifications")) return new NotificationsBridge(this).options(input);
             if (op.equals("authorize")) {
                 keys(input, "reportId", "title", "persistent", "revision", "panels", "from", "to", "fingerprint");
@@ -204,6 +205,17 @@ public class BetterReportsPlugin extends Plugin implements ActionPlugin, SystemI
                 require(Objects.equals(input.get("fingerprint"), grant.get("fingerprint")), "Grant mismatch");
                 internal(() -> client.delete(new DeleteRequest(INDEX, id).setRefreshPolicy(WriteRequest.RefreshPolicy.IMMEDIATE)).actionGet());
                 return Map.of("released", true);
+            }
+            if (op.equals("invalidate")) {
+                require(caller.getSecurityRoles().contains("betterreports_worker"), "Worker permission required");
+                require(!Boolean.TRUE.equals(grant.get("runOnly")), "Only persistent grants can be invalidated");
+                require(Objects.equals(input.get("fingerprint"), grant.get("fingerprint")), "Grant mismatch");
+                internal(() -> { var current = client.get(new GetRequest(INDEX, id)).actionGet(); require(current.isExists(), "Grant unavailable");
+                    Map<String,Object> revoked = current.getSourceAsMap(); require(Objects.equals(input.get("fingerprint"), revoked.get("fingerprint")), "Grant mismatch");
+                    revoked.put("revoked", true); revoked.put("revokedAt", Instant.now().toString()); revoked.put("revokedBy", "betterreports_worker");
+                    return client.index(new IndexRequest(INDEX).id(id).source(revoked).setIfSeqNo(current.getSeqNo()).setIfPrimaryTerm(current.getPrimaryTerm()).setRefreshPolicy(WriteRequest.RefreshPolicy.IMMEDIATE)).actionGet(); });
+                org.apache.logging.log4j.LogManager.getLogger(Service.class).info("betterreports action=invalidate grant={} fingerprintBound=true", id);
+                return Map.of("invalidated", true);
             }
             if (op.equals("revoke")) {
                 ownerOrManager(grant, caller);

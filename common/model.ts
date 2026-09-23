@@ -22,7 +22,7 @@ export const brandingSchema = z.object({
   showPeriod: z.boolean().default(true), showGenerated: z.boolean().default(true), showPageNumbers: z.boolean().default(true)
 }).strict();
 export const sectionSchema = z.discriminatedUnion('kind', [
-  z.object({ id: text(), kind: z.literal('panels'), columns: z.union([z.literal(1), z.literal(2)]), sources: z.array(text()).min(1).max(2) }).strict(),
+  z.object({ id: text(), kind: z.literal('panels'), columns: z.union([z.literal(1), z.literal(2)]), sources: z.array(text()).min(1).max(2), hideLegend: z.boolean().optional() }).strict(),
   z.object({ id: text(), kind: z.literal('text'), text: z.string().max(20000), style: z.enum(['body', 'heading']), bold: z.boolean().default(false), alignment: z.enum(['left', 'center', 'right']).default('left') }).strict(),
   z.object({ id: text(), kind: z.literal('pageBreak') }).strict()
 ]);
@@ -32,7 +32,7 @@ export const reportSchema = z.object({
   branding: brandingSchema, sources: z.array(snapshotSchema).max(100), sections: z.array(sectionSchema).min(1).max(100)
 }).strict();
 export type ReportInput = z.infer<typeof reportSchema>;
-export interface ExecutionGrant { id: string; fingerprint: string; createdAt: string; authorization: 'until_revoked'; temporary?: boolean; specs: Record<string, any>; settings: Record<string, any>; }
+export interface ExecutionGrant { id: string; fingerprint: string; createdAt: string; authorization: 'until_revoked'; temporary?: boolean; authorizedBy?: string; specs: Record<string, any>; settings: Record<string, any>; }
 export type Report = ReportInput & Identity & { id: string; revision: number; schemaVersion: 1; updatedAt: string; grant?: ExecutionGrant };
 export const scheduleSchema = z.object({
   reportId: text(), cron: text(), timezone: text(), enabled: z.boolean(),

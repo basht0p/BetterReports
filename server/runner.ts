@@ -17,10 +17,10 @@ export class Runner {
   private lastGrantCleanup = 0;
   health = { heartbeat: '', active: 0, failures: 0, completed: 0, deliveryUnknown: 0, lastDurationMs: 0, queueDepth: 0, lastError: '' };
   constructor(private store: Store, private executor: Executor, private render: Renderer, private mailer: Mailer, readonly limits: Limits = defaultLimits, private log: (message: string) => void = () => {}) {}
-  async enqueue(report: Report, trigger: Run['trigger'], scheduledAt = new Date(), delivery?: Run['delivery'], scheduleId?: string, request?: any) {
+  async enqueue(report: Report, trigger: Run['trigger'], scheduledAt = new Date(), delivery?: Run['delivery'], scheduleId?: string, request?: any, runOwner = report.owner) {
     const id = scheduleId ? createHash('sha256').update(`${scheduleId}:${scheduledAt.toISOString()}`).digest('hex') : randomUUID();
     const createdAt = new Date().toISOString();
-    const run: Run = { id, report: structuredClone(report), owner: report.owner, tenant: report.tenant, trigger, scheduleId, scheduledAt: scheduledAt.toISOString(), createdAt,
+    const run: Run = { id, report: structuredClone(report), owner: runOwner, tenant: report.tenant, trigger, scheduleId, scheduledAt: scheduledAt.toISOString(), createdAt,
       expiresAt: new Date(Date.now() + this.limits.historyDays * 86400000).toISOString(), ...resolveRange(report.timeRange, scheduledAt, report.timezone),
       status: 'queued', attempt: 0, fence: 0, delivery };
     if (request) this.requests.set(id, request);
@@ -78,8 +78,9 @@ export class Runner {
       try {
         const due = latestDue(schedule.cron, schedule.timezone, schedule.nextAt, now, schedule.lastLocal);
         const report = (await required<Report>(this.store, 'reports', schedule.reportId)).value;
-        if (report.owner !== schedule.owner || report.tenant !== schedule.tenant) throw new ReportError('FORBIDDEN', 'Schedule ownership is inconsistent.');
-        if (!due.duplicate) await this.enqueue(report, 'schedule', due.due, { senderId: schedule.senderId, recipientGroupIds: schedule.recipientGroupIds, subject: schedule.subject, message: schedule.message }, schedule.id);
+        if (report.tenant !== schedule.tenant || (report.tenant === '__user__' && report.owner !== schedule.owner) || (report.grant?.authorizedBy ?? report.owner) !== schedule.owner) throw new ReportError('FORBIDDEN', 'Schedule authorization is inconsistent.');
+        await this.executor.authorize(report);
+        if (!due.duplicate) await this.enqueue(report, 'schedule', due.due, { senderId: schedule.senderId, recipientGroupIds: schedule.recipientGroupIds, subject: schedule.subject, message: schedule.message }, schedule.id, undefined, schedule.owner);
         await this.store.replace('schedules', schedule.id, { ...schedule, nextAt: due.next.toISOString(), lastLocal: localKey(due.due, schedule.timezone), skipped: schedule.skipped + due.skipped, updatedAt: now.toISOString() }, version);
       } catch (error) {
         this.log(`schedule=${schedule.id} ${safeError(error).code}`);

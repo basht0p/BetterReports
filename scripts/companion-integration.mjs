@@ -31,6 +31,13 @@ const temporary=await call('authorize',{...input,persistent:false,title:'One-off
 assert.ok(!(await call('list',{})).grants.some(g=>g.id===temporary.id),'One-off permissions stay out of the scheduling authorization list');
 await call('release',{id:temporary.id,fingerprint:input.fingerprint},'betterreports_runner');
 await assert.rejects(call('execute',{...run,id:temporary.id},'betterreports_runner'),e=>e.status===403);
+const invalidated = await call('authorize',{...input,reportId:'invalidation-fixture',persistent:true});
+await assert.rejects(call('invalidate',{id:invalidated.id,fingerprint:input.fingerprint},'report_owner'),e=>e.status===403);
+await assert.rejects(call('invalidate',{id:invalidated.id,fingerprint:'mismatch'},'betterreports_runner'),e=>e.status===403);
+await assert.rejects(call('invalidate',{id:temporary.id,fingerprint:input.fingerprint},'betterreports_runner'),e=>e.status===403);
+await assert.rejects(call('invalidate',{id:invalidated.id,fingerprint:input.fingerprint},'report_other','finance'),e=>e.status===403);
+await call('invalidate',{id:invalidated.id,fingerprint:input.fingerprint},'betterreports_runner');
+await assert.rejects(call('execute',{...run,id:invalidated.id},'betterreports_runner'),e=>e.status===403 && e.message.includes('GRANT_REVOKED'));
 const result = await call('execute',run,'betterreports_runner');
 assert.equal(result.results[0].hits.total.value,1,'DLS applies to background queries');
 assert.equal(result.results[0].aggregations.hidden.value,0,'FLS hides secret values');

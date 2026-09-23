@@ -4,7 +4,7 @@
 
 - Self-hosted OpenSearch and OpenSearch Dashboards 3.8.0, with their Security plugins enabled.
 - Standard Security tenant mode. Set `opensearch_security.multitenancy.enabled: true` and `opensearch_security.multitenancy.enable_aggregation_view: false`. Disable Workspaces.
-- The BetterReports OpenSearch companion plugin on every OpenSearch node, and a dedicated worker identity with only the execute/check/release/send actions.
+- The BetterReports OpenSearch companion plugin on every OpenSearch node, and a dedicated worker identity with only the execute/check/release/send/invalidate actions.
 - OpenSearch Notifications and Notifications Core 3.8.0, with an enabled SMTP or SES email sender and email recipient groups. Delivery uses Notifications' transport and TLS settings.
 - An internal Dashboards storage role with access to BetterReports indices. Ordinary report users should not receive direct access to these indices.
 
@@ -50,9 +50,9 @@ Create the roles in `companion/roles.json` with the Security role API or your co
 
 The companion ZIP also includes `roles.json`. In SAML deployments, keep an internal Basic authentication domain enabled for the machine identity, ordered before the SAML domain, with `challenge: false`. SAML continues to handle interactive users. This ordering is necessary for the worker's Basic credentials to be accepted; a SAML challenge must not intercept them. Grant the worker only the supplied `betterreports_worker` role.
 
-Report owners authorize saved revisions with **Authorize scheduling**. Grants never expire. There is no renewal or stored SAML session, password, or token. The grant records the authenticated identity, backend roles, mapped OpenSearch roles, custom attributes, selected tenant, and approved aggregation queries. Background execution uses that stored role membership and current definitions of those roles, so changing a role's permissions changes grant execution. Removing group membership or disabling the user's IdP account does not revoke existing grants. Use **Authorizations → Revoke authorization** for that purpose. Tenant managers can revoke another owner's grant only in the currently selected authorized tenant.
+Tenant writers authorize saved revisions with **Authorize scheduling**. The grant belongs to the authorizing user, who must also own any schedule using it. Grants never expire. There is no renewal or stored SAML session, password, or token. The grant records the authenticated identity, backend roles, mapped OpenSearch roles, custom attributes, selected tenant, and approved aggregation queries. Background execution uses that stored role membership and current definitions of those roles, so changing a role's permissions changes grant execution. Removing group membership or disabling the user's IdP account does not revoke existing grants. Use **Authorizations → Revoke authorization** for that purpose. Tenant managers can revoke another owner's grant only in the currently selected authorized tenant.
 
-Report edits and source refresh require new authorization. Existing schedules must reference an authorized current revision. Migrated reports have no grant and cannot run unattended until authorized. Saved source configurations and field formatting are snapshots; background jobs execute approved snapshots without reopening a SAML session. Deleting an upstream dashboard does not revoke a grant: revoke the grant when retiring an authorized report. Interactive import, refresh, and PDF access continue to require the signed-in owner's current tenant/source access.
+Report edits and source refresh retire the previous authorization, pause linked schedules, and require new authorization. Existing schedules must reference an authorized current revision. Migrated reports have no grant and cannot run unattended until authorized. Saved source configurations and field formatting are snapshots; background jobs execute approved snapshots without reopening a SAML session. Deleting an upstream dashboard does not revoke a grant: revoke the grant when retiring an authorized report. Interactive import, refresh, and PDF access continue to require the signed-in owner's current tenant/source access.
 
 Grant revocation is checked before each query, after query execution, and before Notifications delivery. A query already in flight can finish, but its results are discarded if revocation is observed. A message already accepted by SMTP cannot be recalled. Workers can execute approved grants and receive their results; they cannot supply arbitrary identities, roles, tenants, or replacement query bodies.
 
@@ -85,7 +85,7 @@ Check SMTP message limits, including base64 MIME overhead: a 10 MiB PDF takes ap
 
 `delivery_unknown` means the relay may have accepted a message. Check mail-server logs using its stable Message-ID before deliberately choosing **Send now / test** again. A run already in `sending` cannot be cancelled safely.
 
-When a report owner leaves or loses access, revoke their authorizations in each tenant, pause their schedules, retain audit history, and create replacement reports under the new owner. Revocation through BetterReports pauses schedules using that grant. Report ownership cannot be changed through the ordinary edit API.
+When an authorizing user leaves or loses access, revoke their authorizations in each tenant, pause their schedules, and retain audit history. Another tenant writer can authorize the shared definition and create their own schedule. Report creator metadata is retained; cloning creates a separate definition attributed to the current user. Revocation through BetterReports pauses schedules using that grant.
 
 ## Upgrade and removal
 
@@ -120,8 +120,16 @@ After upgrading, perform a browser hard refresh (or clear cached site assets) so
 
 Stop the services and use `opensearch-plugin remove betterreports` and `opensearch-dashboards-plugin remove betterReports` in their respective installation directories before installing the 0.0.3 ZIPs. Restart OpenSearch, then Dashboards. Apply the replacement on every applicable node and Dashboards instance. Plugin removal does not remove the BetterReports data indices. Existing records and authorization grants are retained; no role or configuration changes are required for this upgrade. Hard-refresh your browser or clear cached site assets to load the new UI.
 
-The query/filter builder uses the same native controls as Discover. Add dashboard content first to choose fields, then add any number of filters up to the existing 100-filter limit. Fields come from saved source snapshots, and source filters remain active. Editing filters changes the report revision when saved and requires renewed scheduling authorization, as with other report edits.
+The query/filter builder uses the same native controls as Discover. Add dashboard content first to choose fields, then add any number of filters up to the existing 100-filter limit. In 0.0.3, fields came from saved source snapshots; 0.1.0 fetches current authorized field metadata for the native picker. Source filters remain active. Editing filters changes the report revision when saved and requires renewed scheduling authorization, as with other report edits.
 
 ## Upgrading from 0.0.3 to 0.0.4
 
 Replace both plugin ZIPs using the same stop, remove, install, and restart procedure above. The new visualization adapters do not change the report storage schema or worker permissions. Existing reports, schedules, and grants remain stored. A report must use **Refresh sources** to adopt changes to an imported visualization; refreshing creates a new revision and requires scheduled authorization again. See [Support](SUPPORT.md) for the new visualization coverage and exclusions.
+
+## Upgrading to 0.1.0
+
+Replace both plugin ZIPs using the stop, remove, install, and restart procedure above. Update the `betterreports_worker` role from the new `companion/roles.json` to add `cluster:admin/betterreports/invalidate`; report mutations need this action to retire old grants safely. No additional configuration keys are required. Hard-refresh the browser after installation.
+
+Existing report definitions become visible to users with access to the same named or Global tenant. Tenant write permission controls creation, edits, source refresh, scheduling authorization, cloning, and deletion. Private tenants remain private. PDFs, run history, and schedules remain per-user. Each interactive generation uses the current caller's permissions; it does not reuse another user's scheduled authorization. Global-tenant administrators see all-tenant report cards with tenant labels and must select the corresponding tenant before opening or modifying a report.
+
+Cloning copies the report settings, source snapshots, layout, and branding into a new report. It does not copy authorizations, schedules, history, or PDFs. Report cards show the organization, optional logo, and branding accent. The Hide legend checkbox applies to a dashboard-content section; visible legends flow below chart graphics.

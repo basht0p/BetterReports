@@ -2,7 +2,7 @@
 
 Rendered, branded US Letter PDF reports for **OpenSearch and OpenSearch Dashboards 3.8.0**.
 
-**Latest release: [v0.0.4](https://github.com/basht0p/BetterReports/releases/tag/v0.0.4).** Download both plugin ZIPs and their SHA-256 checksums from the release. The plugin version is `0.0.4`; `3.8.0` in the archive filenames identifies the required OpenSearch platform version.
+**Latest release: [v0.1.0](https://github.com/basht0p/BetterReports/releases/tag/v0.1.0).** Download both plugin ZIPs and their SHA-256 checksums from the release. The plugin version is `0.1.0`; `3.8.0` in the archive filenames identifies the required OpenSearch platform version.
 
 BetterReports imports saved dashboards and visualizations into reusable sections, runs approved queries through durable, revocable OpenSearch grants, and produces vector charts and selectable PDF text. The same PDF is used for preview, download, and Notifications email attachments. Scheduled jobs run inside Dashboards; no external worker or browser service is required.
 
@@ -54,7 +54,7 @@ Source configurations are snapshots. Data is queried anew each run. **Refresh so
 - [Architecture and API](docs/ARCHITECTURE.md)
 - [Validation and deployment acceptance](docs/VALIDATION.md)
 
-Reports and PDFs are private to their owner within a Security tenant. Cluster administrators retain their normal control over cluster data. Jobs require a running Dashboards instance; SMTP delivery requires administrator configuration.
+Report definitions are shared within their Security tenant; editing and cloning require tenant write access. PDFs, run history, and schedules remain private to their generating user. Administrators in the Global tenant can see report metadata from all tenants and switch tenants to work with a report. Cluster administrators retain their normal control over cluster data. Jobs require a running Dashboards instance; email delivery uses configured Notifications senders and recipient groups.
 
 ## License
 
