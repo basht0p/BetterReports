@@ -184,8 +184,13 @@ assert.equal((await api(`/reports/${report.id}`)).grant, undefined);
 assert.equal((await api('/schedules')).find(s => s.id === schedule.id).enabled, false);
 await assert.rejects(request('os', '/_plugins/_better_reports/check', 'POST', { id: linkedGrantId, fingerprint: latestBeforePeerEdit.grant.fingerprint }, 'betterreports_runner'), error => error.status === 403);
 await assert.rejects(request('os', '/.better-reports-v1-artifacts/_search', 'POST', { size: 1 }, 'report_owner'), error => error.status === 403);
+await put('rolesmapping/companion_owner', { users: [] });
 await put('rolesmapping/betterreports_fixture', { users: ['report_other'] });
 try { await assert.rejects(api(`/runs/${finished.id}/pdf?encoding=base64`), error => error.status === 403); }
-finally { await put('rolesmapping/betterreports_fixture', { users: ['report_owner', 'report_other'] }); }
+finally {
+  await put('rolesmapping/betterreports_fixture', { users: ['report_owner', 'report_other'] });
+  if (previousCompanionMapping) await put('rolesmapping/companion_owner', { users: previousCompanionMapping.users ?? [], backend_roles: previousCompanionMapping.backend_roles ?? [], hosts: previousCompanionMapping.hosts ?? [], and_backend_roles: previousCompanionMapping.and_backend_roles ?? [] });
+  else await request('os', '/_plugins/_security/api/rolesmapping/companion_owner', 'DELETE', undefined, 'admin', '');
+}
 await writeFile('output/integration/results.json', JSON.stringify({ platform: '3.8.0', senderId: sender.config_id, recipientGroupIds: [group.config_id], distributedWorkers, reportId: report.id, runId: finished.id, pagesExpected: 1, sha256: artifact.sha256, scheduledEmails: mail.count - baselineMailCount, allTypesRunId: allRun.id, dlsCount: 12, pinnedFreshCount: 13, refreshedSum: 7800, checkedAt: new Date().toISOString() }, null, 2));
 console.log('PASS: 3.8.0 installation, source import, PDF generation, owner/tenant isolation, artifact authorization, and scheduled Notifications PDF email. Evidence: output/integration/.');
