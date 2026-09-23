@@ -133,3 +133,9 @@ Replace both plugin ZIPs using the stop, remove, install, and restart procedure 
 Existing report definitions become visible to users with access to the same named or Global tenant. Tenant write permission controls creation, edits, source refresh, scheduling authorization, cloning, and deletion. Private tenants remain private. PDFs, run history, and schedules remain per-user. Each interactive generation uses the current caller's permissions; it does not reuse another user's scheduled authorization. Global-tenant administrators see all-tenant report cards with tenant labels and must select the corresponding tenant before opening or modifying a report.
 
 Cloning copies the report settings, source snapshots, layout, and branding into a new report. It does not copy authorizations, schedules, history, or PDFs. Report cards show the organization, optional logo, and branding accent. The Hide legend checkbox applies to a dashboard-content section; visible legends flow below chart graphics.
+
+## Upgrading from 0.1.0 to 0.1.1
+
+Replace the Dashboards plugin using the existing stop, remove, install, and restart procedure, then hard-refresh the browser. An existing 0.1.0 companion plugin can remain installed: its code is unchanged in 0.1.1. The companion 0.1.1 ZIP is included for new installations or matching component versions. No role, configuration, or storage changes are required. Existing reports, schedules, grants, and PDFs are retained.
+
+The builder now exposes only native filter controls. Older reports retain any saved report query as a visible, removable saved-filter chip; removing it and saving is an explicit report change. New reports have no free-text query input. Queries inherited from source visualizations continue to apply.

@@ -15,7 +15,7 @@
 
 All execution results and scheduling metadata are stored in `.better-reports-v1-{reports,schedules,runs,artifacts}`. Index mappings intentionally exclude report bodies and PDF data from indexing. OpenSearch sequence numbers and primary terms guard updates. The dedicated internal storage identity is separate from the restricted worker identity.
 
-The native filter picker fetches current, authorized index-pattern field metadata without changing the saved report snapshots. Report queries continue to use the saved source configuration until explicit refresh.
+The builder exposes native filter controls without a free-text query editor. Existing saved report queries are preserved as read-only, removable saved-filter chips. The native filter picker fetches current, authorized index-pattern field metadata without changing the saved report snapshots. Report queries continue to use the saved source configuration until explicit refresh.
 
 The source adapter uses 3.8.0 `search.searchSource.asScoped`, `search.aggs.asScopedToClient`, `indexPatternsServiceFactory`, and `tabifyAggResponse`. Field definitions and field format mappings are taken from the imported snapshot. Interactive source reads verify current access. Scheduled queries use the authorized snapshots and do not require a new SAML session. Grants are stored separately in the protected `.better-reports-grants-v1` system index and have no expiration.
 

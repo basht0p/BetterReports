@@ -6,6 +6,7 @@ import { createHash } from 'node:crypto';
 import archiver from 'archiver';
 
 const root = process.cwd(), stage = resolve(root, 'build/opensearch-dashboards/betterReports');
+const manifest = JSON.parse(await readFile('package.json', 'utf8'));
 await mkdir(stage, { recursive: true });
 async function entries(dir) { const items = await readdir(dir, { withFileTypes: true }); return (await Promise.all(items.map(item => item.isDirectory() ? entries(join(dir, item.name)) : /\.ts$/.test(item.name) ? [join(dir, item.name)] : []))).flat(); }
 await build({ entryPoints: [...await entries(join(root, 'server')), ...await entries(join(root, 'common'))], outbase: root, outdir: stage, platform: 'node', target: 'node22', format: 'cjs', bundle: false });
@@ -15,13 +16,12 @@ await build({ entryPoints: ['public/index.ts'], outfile: join(stage, 'target/pub
     builder.onResolve({ filter: /^(react|react-dom|@elastic\/eui)$/ }, args => ({ path: args.path, namespace: 'osd-shared' }));
     builder.onLoad({ filter: /.*/, namespace: 'osd-shared' }, args => ({ contents: `module.exports = window.__osdSharedDeps__.${shared[args.path]};`, loader: 'js' }));
   } }],
-  footer: { js: "__osdBundles__.define('plugin/betterReports/public', function(){return BetterReportsBundle;});var brCss=document.createElement('link');brCss.rel='stylesheet';brCss.href=window.__osdPublicPath__.betterReports+'betterReports.plugin.css';document.head.appendChild(brCss);" }
+  footer: { js: `__osdBundles__.define('plugin/betterReports/public', function(){return BetterReportsBundle;});var brCss=document.createElement('link');brCss.rel='stylesheet';brCss.href=window.__osdPublicPath__.betterReports+'betterReports.plugin.css?v=${encodeURIComponent(manifest.version)}';document.head.appendChild(brCss);` }
 });
 await mkdir(join(stage, 'public/assets'), { recursive: true });
 await cp('node_modules/pdfjs-dist/build/pdf.worker.min.mjs', join(stage, 'public/assets/pdf.worker.min.mjs'));
 for (const file of ['opensearch_dashboards.json', 'README.md', 'LICENSE', 'NOTICE']) await cp(file, join(stage, file));
 await cp('docs', join(stage, 'docs'), { recursive: true });
-const manifest = JSON.parse(await readFile('package.json', 'utf8'));
 await writeFile(join(stage, 'package.json'), JSON.stringify({ name: manifest.name, version: manifest.version, license: manifest.license, dependencies: manifest.dependencies, opensearchDashboards: manifest.opensearchDashboards }, null, 2));
 if (process.argv.includes('--code-only')) { console.log('Updated compiled plugin code (development only; ZIP unchanged).'); process.exit(0); }
 const lock = JSON.parse(await readFile('package-lock.json', 'utf8'));

@@ -2,7 +2,7 @@
 
 Rendered, branded US Letter PDF reports for **OpenSearch and OpenSearch Dashboards 3.8.0**.
 
-**Latest release: [v0.1.0](https://github.com/basht0p/BetterReports/releases/tag/v0.1.0).** Download both plugin ZIPs and their SHA-256 checksums from the release. The plugin version is `0.1.0`; `3.8.0` in the archive filenames identifies the required OpenSearch platform version.
+**Latest release: [v0.1.1](https://github.com/basht0p/BetterReports/releases/tag/v0.1.1).** Download both plugin ZIPs and their SHA-256 checksums from the release. The plugin version is `0.1.1`; `3.8.0` in the archive filenames identifies the required OpenSearch platform version.
 
 BetterReports imports saved dashboards and visualizations into reusable sections, runs approved queries through durable, revocable OpenSearch grants, and produces vector charts and selectable PDF text. The same PDF is used for preview, download, and Notifications email attachments. Scheduled jobs run inside Dashboards; no external worker or browser service is required.
 
