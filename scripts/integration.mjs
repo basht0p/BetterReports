@@ -259,13 +259,19 @@ try {
   const permittedContext = await api('/context', 'GET', undefined, 'report_other', '');
   assert.equal(permittedContext.canSetOrganizationScope, true);
   assert.ok(permittedContext.tenantNames.includes('finance'));
-  const delegatedScoped = await api('/reports', 'POST', { ...globalInput, title: 'Exact action scope fixture', organizationScope: 'finance' }, 'report_other', '');
-  assert.equal(delegatedScoped.organizationScope, 'finance');
-  const delegatedRun = await completeRun(await api(`/reports/${delegatedScoped.id}/runs`, 'POST', {}, 'report_other', ''), 'report_other', '');
-  assert.match(await textOf(Buffer.from((await api(`/runs/${delegatedRun.id}/pdf?encoding=base64`, 'GET', undefined, 'report_other', '')).pdf, 'base64')), /Count 2\b/);
-  const delegatedAuthorized = await api(`/reports/${delegatedScoped.id}/authorize`, 'POST', { revision: delegatedScoped.revision }, 'report_other', '');
+  // This synthetic role cannot read the Global saved objects created by admin.
+  // Exercise the exact action through the companion's live grant and aggregation
+  // path without broadening saved-object access for the fixture.
+  const delegatedInput = { reportId: 'delegated-scope-fixture', revision: 1, fingerprint: 'delegated-scope-v1', organizationScope: 'finance', from: '2026-09-19T00:00:00Z', to: '2026-09-21T00:00:00Z',
+    panels: [{ index: 'br-fixture-data', timeField: '@timestamp', body: { size: 0, aggs: { count: { value_count: { field: 'environment' } } } } }] };
+  const delegatedGrant = await request('os', '/_plugins/_better_reports/authorize', 'POST', delegatedInput, 'report_other', '');
+  const execution = { id: delegatedGrant.id, fingerprint: delegatedInput.fingerprint, from: delegatedInput.from, to: delegatedInput.to };
+  const delegatedResult = await request('os', '/_plugins/_better_reports/execute', 'POST', execution, 'betterreports_runner', '');
+  assert.equal(delegatedResult.results[0].hits.total.value, 2, 'Exact admin action permits a selected-organization Global grant outside all_access');
   await put('roles/betterreports_scope_writer_fixture', scopeWriterRole);
-  await assert.rejects(request('os', '/_plugins/_better_reports/check', 'POST', { id: delegatedAuthorized.grant.id, fingerprint: delegatedAuthorized.grant.fingerprint }, 'betterreports_runner'), error => error.status === 403);
+  await assert.rejects(request('os', '/_plugins/_better_reports/check', 'POST', { id: delegatedGrant.id, fingerprint: delegatedInput.fingerprint }, 'betterreports_runner', ''), error => error.status === 403);
+  await assert.rejects(request('os', '/_plugins/_better_reports/execute', 'POST', execution, 'betterreports_runner', ''), error => error.status === 403);
+  await request('os', '/_plugins/_better_reports/revoke', 'POST', { id: delegatedGrant.id }, 'report_other', '');
 } finally {
   await put('rolesmapping/betterreports_scope_writer_fixture', { users: [] });
 }
