@@ -39,3 +39,9 @@ Five-field cron in the chosen IANA timezone; UI presets provide daily, weekly, a
 Run IDs deduplicate scheduled occurrences. Reporting bounds and configuration are frozen when the occurrence is enqueued. Notifications acceptance is recorded separately from generation. Unknown delivery outcomes require human review before deliberate resend using **Send now / test**.
 
 The scheduler currently processes at most 1,000 active queue records per scan and the UI lists up to 1,000 recent records. Defaults are designed for 100 schedules; this is not an unbounded enterprise queue.
+
+## Organization filtering
+
+From 0.1.2, every tenant report applies an automatic organization restriction in addition to the saved source and report filters. Named tenants use their exact name; private tenants use the username. Global-tenant report administrators choose an organization or explicitly acknowledge unrestricted Global scope. This setting is independent of the organization's display name in branding.
+
+Documents with no matching organization are excluded from scoped reports. An incompatible organization mapping causes the report to fail rather than run without its restriction. See [Deployment](DEPLOYMENT.md#upgrading-to-012) for upgrade and mapping requirements.

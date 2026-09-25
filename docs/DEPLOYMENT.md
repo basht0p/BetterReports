@@ -139,3 +139,28 @@ Cloning copies the report settings, source snapshots, layout, and branding into 
 Replace the Dashboards plugin using the existing stop, remove, install, and restart procedure, then hard-refresh the browser. An existing 0.1.0 companion plugin can remain installed: its code is unchanged in 0.1.1. The companion 0.1.1 ZIP is included for new installations or matching component versions. No role, configuration, or storage changes are required. Existing reports, schedules, grants, and PDFs are retained.
 
 The builder now exposes only native filter controls. Older reports retain any saved report query as a visible, removable saved-filter chip; removing it and saving is an explicit report change. New reports have no free-text query input. Queries inherited from source visualizations continue to apply.
+
+## Upgrading to 0.1.2
+
+Install both the Dashboards and OpenSearch companion 0.1.2 plugins using the stop, remove, install, and restart procedure above. Hard-refresh the browser. Organization scoping is enforced by the companion during execution, so upgrading only Dashboards is insufficient.
+
+Named-tenant reports automatically restrict data to an exact, case-sensitive `organization.name` match against the tenant name. Private-tenant reports use the authenticated username. The scope filter is separate from source and report filters and cannot be removed in the builder. Existing document-level and field-level Security restrictions continue to apply.
+
+In the Global tenant, **Report Settings → Organization Scope** is available to users with `cluster:admin/betterreports/admin` permission. Grant this action only to intended report administrators, alongside their normal report, tenant, and index permissions. The configured `better_reports.adminRoles` inventory setting alone does not grant organization-scope permission. Choose a named tenant, or choose **Global** to omit organization filtering. Saving an unrestricted Global report requires acknowledging that it will contain data for multiple customers.
+
+Existing report definitions remain stored. Open and save each pre-0.1.2 report to record its scope; Global reports additionally require an administrator to select the scope. Reauthorize scheduling and re-enable any schedules paused by the new checks. Previously generated PDFs lack verified scope metadata and must be regenerated before they can be opened through BetterReports.
+
+The supplied `betterreports_admin` role grants the scope-selection action only. Combine it with `betterreports_user` and the administrator's intended tenant/index roles; it does not itself grant data access. The selector lists named tenants available to the authenticated user and excludes the private-tenant entry. Security identifies that private entry by username, so a named tenant with exactly the same name as the signed-in user is also omitted.
+
+Scoped indices must expose the same unnormalized `keyword` field across the source pattern: either `organization.name` directly or its `organization.name.keyword` multifield. Case-folding normalizers, null-value substitutions, and `copy_to` into the organization field are incompatible with exact organization matching. Correct inconsistent mappings before authorizing a report; BetterReports does not fall back to an analyzed text match or an unrestricted query.
+
+Report users also need `indices:admin/mappings/get` on the same business-data index patterns they report from. Default `read` does not include the full mapping lookup required to verify exact-match safety. Add this action to their existing index permission entry while retaining its DLS/FLS restrictions, for example:
+
+```json
+{
+  "index_patterns": ["your-report-data-*"],
+  "allowed_actions": ["read", "indices:admin/mappings/get"]
+}
+```
+
+Use your existing source patterns and preserve any `dls` and `fls` entries. Do not grant this access to the worker identity. Both initial authorization and background execution verify mappings under the report user's captured roles; missing metadata access fails closed. The companion's internal identity remains limited to its protected grant storage.

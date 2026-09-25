@@ -7,6 +7,7 @@ import java.util.function.Supplier;
 import org.opensearch.OpenSearchStatusException;
 import org.opensearch.action.*;
 import org.opensearch.action.admin.indices.create.CreateIndexRequest;
+import org.opensearch.action.admin.indices.mapping.get.GetMappingsRequest;
 import org.opensearch.action.get.GetRequest;
 import org.opensearch.action.delete.DeleteRequest;
 import org.opensearch.action.index.IndexRequest;
@@ -47,7 +48,7 @@ import org.opensearch.watcher.ResourceWatcherService;
 public class BetterReportsPlugin extends Plugin implements ActionPlugin, SystemIndexPlugin, IdentityAwarePlugin {
     static final String INDEX = ".better-reports-grants-v1";
     static final String PREFIX = "cluster:admin/betterreports/";
-    static final List<String> OPS = List.of("authorize", "execute", "check", "revoke", "list", "release", "invalidate", "notifications", "send");
+    static final List<String> OPS = List.of("authorize", "execute", "check", "revoke", "list", "release", "invalidate", "notifications", "send", "admin");
     private Service service;
     public BetterReportsPlugin(Settings settings) {
         if (!settings.getAsBoolean("plugins.security.system_indices.enabled", false)) throw new IllegalStateException("BetterReports requires plugins.security.system_indices.enabled: true");
@@ -64,7 +65,7 @@ public class BetterReportsPlugin extends Plugin implements ActionPlugin, SystemI
     @Override public void assignSubject(PluginSubject subject) { service.subject = subject; }
     @Override public List<ActionHandler<? extends ActionRequest, ? extends ActionResponse>> getActions() {
         return List.of(new ActionHandler<>(type("authorize"), Authorize.class), new ActionHandler<>(type("execute"), Execute.class),
-            new ActionHandler<>(type("check"), Check.class), new ActionHandler<>(type("revoke"), Revoke.class), new ActionHandler<>(type("list"), ListGrants.class), new ActionHandler<>(type("release"), Release.class), new ActionHandler<>(type("invalidate"), Invalidate.class), new ActionHandler<>(type("notifications"), Notifications.class), new ActionHandler<>(type("send"), Send.class));
+            new ActionHandler<>(type("check"), Check.class), new ActionHandler<>(type("revoke"), Revoke.class), new ActionHandler<>(type("list"), ListGrants.class), new ActionHandler<>(type("release"), Release.class), new ActionHandler<>(type("invalidate"), Invalidate.class), new ActionHandler<>(type("notifications"), Notifications.class), new ActionHandler<>(type("send"), Send.class), new ActionHandler<>(type("admin"), Admin.class));
     }
     static ActionType<Reply> type(String op) { return new ActionType<>(PREFIX + op, Reply::new); }
     @Override public List<RestHandler> getRestHandlers(Settings settings, RestController controller, ClusterSettings clusterSettings,
@@ -117,6 +118,7 @@ public class BetterReportsPlugin extends Plugin implements ActionPlugin, SystemI
     public static class Send extends Transport { @Inject public Send(TransportService t, ActionFilters f, Service s) { super("send", t, f, s); } }
     public static class Release extends Transport { @Inject public Release(TransportService t, ActionFilters f, Service s) { super("release", t, f, s); } }
     public static class Invalidate extends Transport { @Inject public Invalidate(TransportService t, ActionFilters f, Service s) { super("invalidate", t, f, s); } }
+    public static class Admin extends Transport { @Inject public Admin(TransportService t, ActionFilters f, Service s) { super("admin", t, f, s); } }
 
     public static class Service {
         final Client client; final ThreadPool pool; final NamedXContentRegistry registry; PluginSubject subject;
@@ -171,22 +173,35 @@ public class BetterReportsPlugin extends Plugin implements ActionPlugin, SystemI
         Object handle(String op, Map<String,Object> input) throws Exception {
             User caller = actor(); init();
             if (!Set.of("execute", "check", "release", "invalidate", "send").contains(op)) tenantAccess();
+            if (op.equals("admin")) { keys(input); return Map.of("allowed", true); }
             if (op.equals("notifications")) return new NotificationsBridge(this).options(input);
             if (op.equals("authorize")) {
-                keys(input, "reportId", "title", "persistent", "revision", "panels", "from", "to", "fingerprint");
+                keys(input, "reportId", "title", "persistent", "revision", "panels", "from", "to", "fingerprint", "organizationScope");
                 String reportId = string(input, "reportId"); String fingerprint = string(input, "fingerprint");
+                require(input.get("organizationScope") instanceof String, "Organization scope required");
+                String scope = (String)input.get("organizationScope");
+                require(scope.length() <= 200, "Invalid organization scope");
+                if (tenant(caller).isEmpty()) {
+                    // This separate transport action is checked by Security against the
+                    // exact cluster:admin/betterreports/admin permission.
+                    client.execute(type("admin"), new Request("{}")).actionGet();
+                } else {
+                    String expected = tenant(caller).equals("__user__") ? caller.getName() : tenant(caller);
+                    require(scope.equals(expected), "Organization scope must match Security tenant");
+                }
                 require(input.get("revision") instanceof Number, "Revision required");
                 Object raw = input.get("panels"); require(raw instanceof List<?> && ((List<?>)raw).size() <= 100, "Invalid panels");
                 List<Map<String,Object>> panels = (List<Map<String,Object>>)raw;
                 for (Map<String,Object> panel : panels) validatePanel(panel);
                 // Validate queries in the live authenticated context before creating a durable grant.
-                interval(input); for (Map<String,Object> panel : panels) search(panel, string(input, "from"), string(input, "to"));
+                interval(input); for (Map<String,Object> panel : panels) search(panel, string(input, "from"), string(input, "to"), scope);
                 Map<String,Object> grant = new LinkedHashMap<>(); grant.put("owner", caller.getName()); grant.put("tenant", tenant(caller));
                 grant.put("reportId", reportId); grant.put("revision", input.get("revision")); grant.put("fingerprint", fingerprint);
                 if (input.containsKey("title")) grant.put("title", string(input, "title"));
                 require(!input.containsKey("persistent") || input.get("persistent") instanceof Boolean, "Invalid persistence option");
                 grant.put("runOnly", Boolean.FALSE.equals(input.get("persistent")));
                 grant.put("panels", panels); grant.put("user", caller.toSerializedBase64());
+                grant.put("organizationScope", scope);
                 require(!caller.getSecurityRoles().isEmpty(), "No mapped execution roles available");
                 grant.put("createdAt", Instant.now().toString()); grant.put("revoked", false);
                 String id = UUID.randomUUID().toString(); internal(() -> client.index(new IndexRequest(INDEX).id(id).opType(DocWriteRequest.OpType.CREATE).source(grant).setRefreshPolicy(WriteRequest.RefreshPolicy.IMMEDIATE)).actionGet());
@@ -226,6 +241,8 @@ public class BetterReportsPlugin extends Plugin implements ActionPlugin, SystemI
             }
             if (op.equals("check") && !caller.getSecurityRoles().contains("betterreports_worker") && !caller.getSecurityRoles().contains("all_access")) { tenantAccess(); ownerOrManager(grant, caller); }
             active(grant); require(Objects.equals(input.get("fingerprint"), grant.get("fingerprint")), "Report changed: authorize this revision again");
+            String scope = grantScope(grant);
+            if (Objects.toString(grant.get("tenant"), "").isEmpty()) requireGlobalAdmin(grant);
             if (op.equals("check")) return summary(id, grant);
             if (op.equals("send")) {
                 require(!Boolean.TRUE.equals(grant.get("runOnly")), "Scheduled authorization required for delivery");
@@ -243,11 +260,12 @@ public class BetterReportsPlugin extends Plugin implements ActionPlugin, SystemI
             User executionUser = User.fromSerializedBase64((String)grant.get("user"));
             for (Map<String,Object> panel : (List<Map<String,Object>>)grant.get("panels")) {
                 active(get(id));
+                validatePanel(panel);
                 try (ThreadContext.StoredContext ignored = pool.getThreadContext().stashContext()) {
                     pool.getThreadContext().putTransient(ConfigConstants.OPENDISTRO_SECURITY_USER, executionUser);
                     // Transport-only role injection forces Security to evaluate the stored role set.
                     pool.getThreadContext().putTransient("_opendistro_security_injected_roles", "plugin|" + String.join(",", executionUser.getSecurityRoles()));
-                    results.add(search(panel, string(input, "from"), string(input, "to")));
+                    results.add(search(panel, string(input, "from"), string(input, "to"), scope));
                 }
             }
             active(get(id)); return Map.of("results", results);
@@ -263,17 +281,90 @@ public class BetterReportsPlugin extends Plugin implements ActionPlugin, SystemI
             keys(body, "query", "aggs", "aggregations", "size", "track_total_hits", "timeout");
             require(((Number)body.getOrDefault("size", 0)).intValue() == 0, "Aggregation-only reports are supported");
             rejectScripts(body);
+            rejectScopeEscapingAggregations(body.get("aggs"));
+            rejectScopeEscapingAggregations(body.get("aggregations"));
         }
         void rejectScripts(Object value) {
             if (value instanceof Map<?,?> map) { for (var entry : map.entrySet()) { require(!Set.of("script", "script_fields", "runtime_mappings", "terms_lookup", "percolate", "more_like_this").contains(entry.getKey()), "Executable or external query content is not supported"); rejectScripts(entry.getValue()); } }
             if (value instanceof List<?> list) list.forEach(this::rejectScripts);
         }
-        Object search(Map<String,Object> panel, String from, String to) throws IOException {
-            Map<String,Object> body = parse(json(panel.get("body")));
-            if (panel.get("timeField") instanceof String field && !field.isEmpty()) {
-                Object original = body.getOrDefault("query", Map.of("match_all", Map.of()));
-                body.put("query", Map.of("bool", Map.of("filter", List.of(original, Map.of("range", Map.of(field, Map.of("gte", from, "lte", to, "format", "strict_date_optional_time")))))));
+        void rejectScopeEscapingAggregations(Object value) {
+            if (value == null) return;
+            require(value instanceof Map<?,?>, "Invalid aggregations");
+            for (Object definition : ((Map<?,?>)value).values()) {
+                require(definition instanceof Map<?,?>, "Invalid aggregation definition");
+                Map<?,?> aggregation = (Map<?,?>)definition;
+                for (Object operator : aggregation.keySet()) require(!Set.of("global", "children", "parent", "reverse_nested", "nested", "significant_terms", "significant_text").contains(operator), "Scope-escaping aggregation content is not supported");
+                rejectScopeEscapingAggregations(aggregation.get("aggs"));
+                rejectScopeEscapingAggregations(aggregation.get("aggregations"));
             }
+        }
+        String grantScope(Map<String,Object> grant) {
+            Object value = grant.get("organizationScope");
+            String tenant = Objects.toString(grant.get("tenant"), "");
+            // Pre-upgrade grants may have produced unfiltered PDFs and cannot
+            // establish the scope of a queued send or another execution.
+            require(value instanceof String, "Legacy grant requires reauthorization");
+            String scope = (String)value;
+            require(scope.length() <= 200, "Invalid organization scope");
+            if (!tenant.isEmpty()) require(scope.equals(tenant.equals("__user__") ? grant.get("owner") : tenant), "Grant organization scope mismatch");
+            return scope;
+        }
+        void requireGlobalAdmin(Map<String,Object> grant) {
+            User executionUser = User.fromSerializedBase64((String)grant.get("user"));
+            try (ThreadContext.StoredContext ignored = pool.getThreadContext().stashContext()) {
+                pool.getThreadContext().putTransient(ConfigConstants.OPENDISTRO_SECURITY_USER, executionUser);
+                pool.getThreadContext().putTransient("_opendistro_security_injected_roles", "plugin|" + String.join(",", executionUser.getSecurityRoles()));
+                pool.getThreadContext().putTransient(ConfigConstants.OPENDISTRO_SECURITY_USER_INFO_THREAD_CONTEXT,
+                    executionUser.getName().replace("|", "\\|") + "|" + String.join(",", executionUser.getRoles()) + "|" + String.join(",", executionUser.getSecurityRoles()) + "||READ");
+                client.execute(type("admin"), new Request("{}")).actionGet();
+            }
+        }
+        boolean copiesInto(Object value, String field) {
+            if (value instanceof Map<?,?> map) {
+                Object target = map.get("copy_to");
+                if (field.equals(target) || target instanceof List<?> targets && targets.contains(field)) return true;
+                for (Object child : map.values()) if (copiesInto(child, field)) return true;
+            }
+            if (value instanceof List<?> list) for (Object child : list) if (copiesInto(child, field)) return true;
+            return false;
+        }
+        String organizationField(String pattern) {
+            try {
+                var mappings = client.admin().indices().getMappings(new GetMappingsRequest().indices(pattern)).actionGet().getMappings();
+                String field = null;
+                int count = 0;
+                for (String index : mappings.keySet()) {
+                    count++;
+                    Map<String,Object> root = mappings.get(index).sourceAsMap();
+                    Object properties = root.get("properties");
+                    Object organization = properties instanceof Map<?,?> map ? map.get("organization") : null;
+                    Object nested = organization instanceof Map<?,?> map ? map.get("properties") : null;
+                    Object name = nested instanceof Map<?,?> map ? map.get("name") : null;
+                    require(name instanceof Map<?,?>, "organization.name must be mapped as an exact keyword field in every index");
+                    Map<?,?> definition = (Map<?,?>)name;
+                    String candidate = null;
+                    if ("keyword".equals(definition.get("type")) && !definition.containsKey("normalizer") && !definition.containsKey("null_value")) candidate = "organization.name";
+                    Object multifields = definition.get("fields");
+                    Object keyword = multifields instanceof Map<?,?> map ? map.get("keyword") : null;
+                    if (candidate == null && !definition.containsKey("null_value") && keyword instanceof Map<?,?> mapped && "keyword".equals(mapped.get("type")) && !mapped.containsKey("normalizer") && !mapped.containsKey("null_value")) candidate = "organization.name.keyword";
+                    require(candidate != null && (field == null || field.equals(candidate)) && !copiesInto(root, "organization.name") && !copiesInto(root, candidate), "organization.name requires the same unnormalized keyword mapping without null substitution or copy_to in every index");
+                    field = candidate;
+                }
+                require(count > 0, "No indices matched the report source");
+                return field;
+            } catch (Exception error) {
+                if (error instanceof RuntimeException runtime) throw runtime;
+                throw new IllegalStateException("Could not verify organization.name keyword mapping", error);
+            }
+        }
+        Object search(Map<String,Object> panel, String from, String to, String scope) throws IOException {
+            Map<String,Object> body = parse(json(panel.get("body")));
+            List<Object> filters = new ArrayList<>();
+            filters.add(body.getOrDefault("query", Map.of("match_all", Map.of())));
+            if (panel.get("timeField") instanceof String field && !field.isEmpty()) filters.add(Map.of("range", Map.of(field, Map.of("gte", from, "lte", to, "format", "strict_date_optional_time"))));
+            if (!scope.isEmpty()) filters.add(Map.of("term", Map.of(organizationField(string(panel, "index")), Map.of("value", scope))));
+            body.put("query", Map.of("bool", Map.of("filter", filters)));
             body.put("size", 0); body.put("timeout", "240s"); body.put("track_total_hits", true);
             try (XContentParser parser = XContentType.JSON.xContent().createParser(registry, DeprecationHandler.THROW_UNSUPPORTED_OPERATION, json(body))) {
                 var response = client.search(new SearchRequest(string(panel, "index")).source(SearchSourceBuilder.fromXContent(parser)).allowPartialSearchResults(false)).actionGet();

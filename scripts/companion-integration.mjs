@@ -20,10 +20,27 @@ await put('roles/companion_owner', { cluster_permissions: ['cluster:admin/better
 await put('rolesmapping/companion_owner', { users: ['report_owner','report_other'] });
 await put('roles/betterreports_worker', JSON.parse(await readFile('companion/roles.json', 'utf8')).betterreports_worker);
 await put('rolesmapping/betterreports_worker', { users: ['betterreports_runner'] });
-await request('/br-companion-data', { mappings: { properties: { department: { type: 'keyword' }, '@timestamp': { type: 'date' }, secret: { type: 'long' } } } }, 'admin','', 'PUT').catch(e => { if (!e.message.includes('resource_already_exists')) throw e; });
-for (const [id,department] of [[1,'operations'],[2,'finance']]) await request(`/br-companion-data/_doc/${id}?refresh=true`, { department, '@timestamp':'2026-09-20T12:00:00Z', secret:42 },'admin','', 'PUT');
+await request('/br-companion-data', { mappings: { properties: { department: { type: 'keyword' }, '@timestamp': { type: 'date' }, secret: { type: 'long' }, organization: { properties: { name: { type: 'keyword' } } } } } }, 'admin','', 'PUT').catch(e => { if (!e.message.includes('resource_already_exists')) throw e; });
+await request('/br-companion-data/_mapping', { properties: { organization: { properties: { name: { type: 'keyword' } } } } }, 'admin', '', 'PUT');
+for (const [id,department,organization] of [[1,'operations','operations'],[2,'operations','finance'],[3,'finance','operations']]) await request(`/br-companion-data/_doc/${id}?refresh=true`, { department, organization: { name: organization }, '@timestamp':'2026-09-20T12:00:00Z', secret:42 },'admin','', 'PUT');
+const dlsVisible = await request('/br-companion-data/_search', { size: 0, track_total_hits: true }, 'report_owner');
+assert.equal(dlsVisible.hits.total.value, 2, 'DLS alone still includes another organization');
 const call = (op, body, user='report_owner', tenant='operations') => request(`/_plugins/_better_reports/${op}`, body, user, tenant);
-const input = { reportId:'fixture', revision:1, fingerprint:'fixture-v1', from:'2026-09-20T00:00:00Z', to:'2026-09-21T00:00:00Z', panels:[{index:'br-companion-*', timeField:'@timestamp', body:{size:0, aggs:{hidden:{sum:{field:'secret'}}}}}] };
+const input = { reportId:'fixture', revision:1, fingerprint:'fixture-v1', organizationScope:'operations', from:'2026-09-20T00:00:00Z', to:'2026-09-21T00:00:00Z', panels:[{index:'br-companion-data', timeField:'@timestamp', body:{size:0, aggs:{hidden:{sum:{field:'secret'}}}}}] };
+await assert.rejects(call('authorize', input), e => e.status === 403, 'Read permission alone does not allow scope mapping validation');
+await put('roles/companion_owner', { cluster_permissions: ['cluster:admin/betterreports/authorize','cluster:admin/betterreports/list','cluster:admin/betterreports/revoke','cluster:admin/betterreports/check'], index_permissions: [{ index_patterns: ['br-companion-*'], allowed_actions: ['read', 'indices:admin/mappings/get'], dls: '{"term":{"department":"operations"}}', fls: ['~secret'] }], tenant_permissions: [{ tenant_patterns: ['operations'], allowed_actions: ['kibana_all_write'] }] });
+await assert.rejects(call('authorize', { ...input, organizationScope: 'finance' }), e => e.status === 403);
+await assert.rejects(call('authorize', { ...input, panels: [{ ...input.panels[0], body: { size: 0, aggs: { escape: { global: {} } } } }] }), e => e.status === 403);
+await assert.rejects(call('authorize', { ...input, panels: [{ ...input.panels[0], body: { size: 0, aggs: { byDepartment: { terms: { field: 'department' }, aggs: { escape: { global: {} } } } } } }] }), e => e.status === 403);
+const innocentlyNamed = await call('authorize', { ...input, panels: [{ ...input.panels[0], body: { size: 0, query: { term: { parent: 'unused' } }, aggs: { global: { value_count: { field: 'department' } } } } }] });
+assert.ok(innocentlyNamed.id, 'A term field called parent and an aggregation named global are valid');
+await request('/br-companion-normalized', { settings: { analysis: { normalizer: { folded: { type: 'custom', filter: ['lowercase'] } } } }, mappings: { properties: { department: { type: 'keyword' }, '@timestamp': { type: 'date' }, organization: { properties: { name: { type: 'keyword', normalizer: 'folded' } } } } } }, 'admin', '', 'PUT').catch(e => { if (!e.message.includes('resource_already_exists')) throw e; });
+await assert.rejects(call('authorize', { ...input, panels: [{ ...input.panels[0], index: 'br-companion-normalized' }] }), e => e.status === 403);
+await request('/br-companion-multifield', { mappings: { properties: { department: { type: 'keyword' }, '@timestamp': { type: 'date' }, organization: { properties: { name: { type: 'text', fields: { keyword: { type: 'keyword' } } } } } } } }, 'admin', '', 'PUT').catch(e => { if (!e.message.includes('resource_already_exists')) throw e; });
+await request('/br-companion-multifield/_doc/1?refresh=true', { department: 'operations', organization: { name: 'operations' }, '@timestamp': '2026-09-20T12:00:00Z' }, 'admin', '', 'PUT');
+await request('/br-companion-multifield/_doc/2?refresh=true', { department: 'operations', organization: { name: 'operations-extra' }, '@timestamp': '2026-09-20T12:00:00Z' }, 'admin', '', 'PUT');
+const multifieldGrant = await call('authorize', { ...input, panels: [{ ...input.panels[0], index: 'br-companion-multifield', body: { size: 0, aggs: { count: { value_count: { field: 'department' } } } } }] });
+assert.equal((await call('execute', { id: multifieldGrant.id, fingerprint: input.fingerprint, from: input.from, to: input.to }, 'betterreports_runner')).results[0].hits.total.value, 1, 'Plain .keyword multifields preserve exact scope matching');
 const grant = await call('authorize', input); assert.equal(grant.authorization,'until_revoked');
 const run = {id:grant.id, fingerprint:input.fingerprint, from:input.from, to:input.to};
 await assert.rejects(call('release',{id:grant.id,fingerprint:input.fingerprint},'betterreports_runner'),e=>e.status===403);
@@ -39,7 +56,7 @@ await assert.rejects(call('invalidate',{id:invalidated.id,fingerprint:input.fing
 await call('invalidate',{id:invalidated.id,fingerprint:input.fingerprint},'betterreports_runner');
 await assert.rejects(call('execute',{...run,id:invalidated.id},'betterreports_runner'),e=>e.status===403 && e.message.includes('GRANT_REVOKED'));
 const result = await call('execute',run,'betterreports_runner');
-assert.equal(result.results[0].hits.total.value,1,'DLS applies to background queries');
+assert.equal(result.results[0].hits.total.value,1,'Organization scope and DLS both apply to background queries');
 assert.equal(result.results[0].aggregations.hidden.value,0,'FLS hides secret values');
 const nextDay = await call('execute',{...run,from:'2026-09-21T00:00:00Z',to:'2026-09-22T00:00:00Z'},'betterreports_runner');
 assert.equal(nextDay.results[0].hits.total.value,0,'Each execution uses its own reporting interval');
@@ -80,5 +97,5 @@ try {
   await assert.rejects(call('execute',{...run,id:managed.id},'betterreports_runner'),e=>e.status===403);
 } finally { await put('rolesmapping/betterreports_tenant_manager',{users:[]}); }
 await mkdir('output/integration',{recursive:true});
-await writeFile('output/integration/companion.json',JSON.stringify({version:'3.8.0',grantId:grant.id,restartTested:process.argv.includes('--restart'),tests:['DLS','FLS','worker least privilege','tenant isolation','owner isolation','system index protection','query tampering','indefinite membership-independent grant','current role definitions','tenant manager revocation','revocation'],checkedAt:new Date().toISOString()},null,2));
+await writeFile('output/integration/companion.json',JSON.stringify({version:'3.8.0',grantId:grant.id,restartTested:process.argv.includes('--restart'),tests:['DLS','FLS','worker least privilege','tenant isolation','owner isolation','system index protection','query tampering','tenant organization scope','global aggregation rejection','normalized keyword rejection','keyword multifield exact matching','indefinite membership-independent grant','current role definitions','tenant manager revocation','revocation'],checkedAt:new Date().toISOString()},null,2));
 console.log('PASS companion authorization, DLS/FLS, isolation, indefinite lifetime, and revocation.');

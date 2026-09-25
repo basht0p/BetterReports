@@ -24,7 +24,7 @@ await put('tenants/operations', { description: 'BetterReports disposable fixture
 await put('tenants/finance', { description: 'BetterReports second tenant fixture' });
 await put('roles/betterreports_storage', { cluster_permissions: [], index_permissions: [{ index_patterns: ['.better-reports-v1-*'], allowed_actions: ['indices_all'] }], tenant_permissions: [] });
 await put('rolesmapping/betterreports_storage', { users: ['kibanaserver'] });
-await put('roles/betterreports_fixture', { cluster_permissions: ['cluster_composite_ops'], index_permissions: [{ index_patterns: ['br-fixture-*'], allowed_actions: ['read'], dls: JSON.stringify({ term: { environment: 'production' } }) }], tenant_permissions: [{ tenant_patterns: ['operations', 'finance'], allowed_actions: ['kibana_all_write'] }] });
+await put('roles/betterreports_fixture', { cluster_permissions: ['cluster_composite_ops'], index_permissions: [{ index_patterns: ['br-fixture-*'], allowed_actions: ['read', 'indices:admin/mappings/get'], dls: JSON.stringify({ term: { environment: 'production' } }) }], tenant_permissions: [{ tenant_patterns: ['operations', 'finance'], allowed_actions: ['kibana_all_write'] }] });
 for (const [name, password] of [['report_owner', secrets.owner], ['report_other', secrets.other], ['betterreports_runner', secrets.runner]]) await put(`internalusers/${name}`, { password, backend_roles: [] });
 await put('rolesmapping/betterreports_fixture', { users: ['report_owner', 'report_other'] });
 await put('roles/betterreports_user', JSON.parse(await readFile('companion/roles.json', 'utf8')).betterreports_user);
@@ -38,10 +38,11 @@ assert.equal(restarted.status, 0);
 await wait('Dashboards', () => request('osd', '/api/better_reports/health'), 240);
 if (process.argv.includes('--multi')) await wait('Secondary Dashboards', () => request('osd2', '/api/better_reports/health'), 240);
 await request('os', '/br-fixture-data', 'PUT', { mappings: { properties: { '@timestamp': { type: 'date' }, environment: { type: 'keyword' }, bytes: { type: 'long' } } } }).catch(error => { if (!error.message.includes('resource_already_exists_exception')) throw error; });
-await request('os', '/br-fixture-data/_mapping', 'PUT', { properties: { country: { type: 'keyword' }, point: { type: 'geo_point' } } });
-for (let i = 0; i < 20; i++) await request('os', `/br-fixture-data/_doc/${i}?refresh=true`, 'PUT', { '@timestamp': '2026-09-20T12:00:00Z', environment: i < 12 ? 'production' : 'development', bytes: i * 100, country: 'US', point: { lat: 40 + i / 10, lon: -74 } });
+await request('os', '/br-fixture-data/_mapping', 'PUT', { properties: { country: { type: 'keyword' }, point: { type: 'geo_point' }, organization: { properties: { name: { type: 'keyword' } } } } });
+for (const id of [100, 101, 102, 103, 104, 105]) await request('os', `/br-fixture-data/_doc/${id}?refresh=true`, 'DELETE').catch(error => { if (error.status !== 404) throw error; });
+for (let i = 0; i < 20; i++) await request('os', `/br-fixture-data/_doc/${i}?refresh=true`, 'PUT', { '@timestamp': '2026-09-20T12:00:00Z', environment: i < 12 ? 'production' : 'development', bytes: i * 100, country: 'US', point: { lat: 40 + i / 10, lon: -74 }, organization: { name: 'operations' } });
 const so = (type, id, body) => request('osd', `/api/saved_objects/${type}/${id}?overwrite=true`, 'POST', body, 'report_owner');
-await so('index-pattern', 'br-fixture-index', { attributes: { title: 'br-fixture-*', timeFieldName: '@timestamp', fields: JSON.stringify([{ name: '@timestamp', type: 'date', searchable: true, aggregatable: true }, { name: 'bytes', type: 'number', searchable: true, aggregatable: true }, { name: 'environment', type: 'string', searchable: true, aggregatable: true }, { name: 'country', type: 'string', searchable: true, aggregatable: true }, { name: 'point', type: 'geo_point', searchable: true, aggregatable: true }]) } });
+await so('index-pattern', 'br-fixture-index', { attributes: { title: 'br-fixture-*', timeFieldName: '@timestamp', fields: JSON.stringify([{ name: '@timestamp', type: 'date', searchable: true, aggregatable: true }, { name: 'bytes', type: 'number', searchable: true, aggregatable: true }, { name: 'environment', type: 'string', searchable: true, aggregatable: true }, { name: 'country', type: 'string', searchable: true, aggregatable: true }, { name: 'point', type: 'geo_point', searchable: true, aggregatable: true }, { name: 'organization.name', type: 'string', searchable: true, aggregatable: true }]) } });
 await so('visualization', 'br-fixture-metric', { attributes: { title: 'Production requests', visState: JSON.stringify({ type: 'metric', params: {}, aggs: [{ id: '1', enabled: true, type: 'count', schema: 'metric', params: {} }] }), kibanaSavedObjectMeta: { searchSourceJSON: JSON.stringify({ indexRefName: 'kibanaSavedObjectMeta.searchSourceJSON.index', query: { language: 'kuery', query: '' }, filter: [] }) } }, references: [{ type: 'index-pattern', id: 'br-fixture-index', name: 'kibanaSavedObjectMeta.searchSourceJSON.index' }] });
 const api = (path, method = 'GET', body, username = 'report_owner', tenant = 'operations') => request('osd', `/api/better_reports${path}`, method, body, username, tenant);
 const dataCheck = await request('os', '/br-fixture-data/_search', 'POST', { size: 0, track_total_hits: true }, 'report_owner'); assert.equal(dataCheck.hits.total.value, 12, 'DLS must exclude development records');
@@ -64,14 +65,14 @@ const globalContext = await api('/context', 'GET', undefined, 'admin', ''); asse
 const globalInventory = await api('/reports', 'GET', undefined, 'admin', '');
 assert.ok(globalInventory.some(item => item.id === report.id && item.tenant === 'operations' && item.requiresTenantSwitch && !item.canRun && !item.canEdit && !item.canClone));
 await assert.rejects(api(`/reports/${report.id}`, 'GET', undefined, 'admin', ''), error => error.status === 404);
-const privateReport = await api('/reports', 'POST', { ...report, title: 'Private fixture', sources: [], sections: [{ id: 'private-text', kind: 'text', text: 'Private', style: 'body', bold: false, alignment: 'left' }], id: undefined, owner: undefined, tenant: undefined, revision: undefined, schemaVersion: undefined, updatedAt: undefined }, 'report_owner', '__user__');
+const privateReport = await api('/reports', 'POST', { ...report, title: 'Private fixture', organizationScope: undefined, sources: [], sections: [{ id: 'private-text', kind: 'text', text: 'Private', style: 'body', bold: false, alignment: 'left' }], id: undefined, owner: undefined, tenant: undefined, revision: undefined, schemaVersion: undefined, updatedAt: undefined }, 'report_owner', '__user__');
 assert.equal(privateReport.tenant, '__user__');
 assert.ok((await api('/reports', 'GET', undefined, 'report_owner', '__user__')).some(item => item.id === privateReport.id));
 assert.ok(!(await api('/reports', 'GET', undefined, 'report_other', '__user__')).some(item => item.id === privateReport.id));
 await assert.rejects(api(`/reports/${privateReport.id}`, 'GET', undefined, 'report_other', '__user__'), error => error.status === 404);
 await assert.rejects(api(`/reports/${privateReport.id}/clone`, 'POST', { revision: privateReport.revision }, 'report_other', '__user__'), error => error.status === 404);
 assert.ok((await api('/reports', 'GET', undefined, 'admin', '')).some(item => item.id === privateReport.id && item.requiresTenantSwitch && !item.canRun));
-await put('roles/betterreports_fixture_peer', { cluster_permissions: ['cluster_composite_ops'], index_permissions: [{ index_patterns: ['br-fixture-*'], allowed_actions: ['read'], dls: JSON.stringify({ range: { bytes: { lt: 300 } } }) }], tenant_permissions: [{ tenant_patterns: ['operations', 'finance'], allowed_actions: ['kibana_all_write'] }] });
+await put('roles/betterreports_fixture_peer', { cluster_permissions: ['cluster_composite_ops'], index_permissions: [{ index_patterns: ['br-fixture-*'], allowed_actions: ['read', 'indices:admin/mappings/get'], dls: JSON.stringify({ range: { bytes: { lt: 300 } } }) }], tenant_permissions: [{ tenant_patterns: ['operations', 'finance'], allowed_actions: ['kibana_all_write'] }] });
 await put('rolesmapping/betterreports_fixture_peer', { users: ['report_other'] });
 await put('rolesmapping/betterreports_fixture', { users: ['report_owner'] });
 try {
@@ -86,7 +87,7 @@ try {
   await put('rolesmapping/betterreports_fixture', { users: ['report_owner', 'report_other'] });
   await put('rolesmapping/betterreports_fixture_peer', { users: [] });
 }
-await put('roles/betterreports_fixture_readonly', { cluster_permissions: ['cluster_composite_ops'], index_permissions: [{ index_patterns: ['br-fixture-*'], allowed_actions: ['read'], dls: JSON.stringify({ term: { environment: 'production' } }) }], tenant_permissions: [{ tenant_patterns: ['operations'], allowed_actions: ['kibana_all_read'] }] });
+await put('roles/betterreports_fixture_readonly', { cluster_permissions: ['cluster_composite_ops'], index_permissions: [{ index_patterns: ['br-fixture-*'], allowed_actions: ['read', 'indices:admin/mappings/get'], dls: JSON.stringify({ term: { environment: 'production' } }) }], tenant_permissions: [{ tenant_patterns: ['operations'], allowed_actions: ['kibana_all_read'] }] });
 await put('rolesmapping/betterreports_fixture_readonly', { users: ['report_other'] });
 await put('rolesmapping/betterreports_fixture', { users: ['report_owner'] });
 // The standalone companion suite leaves its own write-capable fixture role mapped.
@@ -141,7 +142,7 @@ assert.ok(panels.every(panel => panel.source), JSON.stringify(panels));
 const { id, owner, tenant, revision, schemaVersion, updatedAt, ...definition } = report;
 const allTypes = { ...definition, title: 'All supported visualizations', sources: [source, ...panels.map(panel => panel.source)] };
 allTypes.sections = allTypes.sources.map((source, i) => ({ id: String(i), kind: 'panels', columns: 1, sources: [source.key] }));
-async function completeRun(queued) { return wait('Fixture run', async () => { const run = await api(`/runs/${queued.runId}`); if (run.status === 'failed') throw Object.assign(new Error(JSON.stringify(run.error)), { fatal: true }); return run.status === 'complete' ? run : false; }, 180); }
+async function completeRun(queued, username = 'report_owner', tenant = 'operations') { return wait('Fixture run', async () => { const run = await api(`/runs/${queued.runId}`, 'GET', undefined, username, tenant); if (run.status === 'failed') throw Object.assign(new Error(JSON.stringify(run.error)), { fatal: true }); return run.status === 'complete' ? run : false; }, 180); }
 const allRun = await completeRun(await api('/preview', 'POST', allTypes));
 const allArtifact = await api(`/runs/${allRun.id}/pdf?encoding=base64`);
 const allPdf = Buffer.from(allArtifact.pdf, 'base64'); await writeFile('output/integration/all-types.pdf', allPdf);
@@ -149,7 +150,7 @@ const allText = await textOf(allPdf); assert.ok(!allText.includes('1789862400000
 assert.ok(allText.includes('6,600') || allText.includes('6600'), 'Sum must honor DLS');
 // Change source configuration, then data; snapshots must stay pinned until refresh.
 await so('visualization', 'br-fixture-metric', { attributes: { title: 'Changed sum', visState: JSON.stringify({ type: 'metric', params: {}, aggs: [metric('sum', 1)] }), kibanaSavedObjectMeta: { searchSourceJSON: JSON.stringify({ indexRefName: 'index', query: { language: 'kuery', query: '' }, filter: [] }) } }, references: [{ type: 'index-pattern', id: 'br-fixture-index', name: 'index' }] });
-await request('os', '/br-fixture-data/_doc/12?refresh=true', 'PUT', { '@timestamp': '2026-09-20T12:00:00Z', environment: 'production', bytes: 1200 });
+await request('os', '/br-fixture-data/_doc/12?refresh=true', 'PUT', { '@timestamp': '2026-09-20T12:00:00Z', environment: 'production', bytes: 1200, organization: { name: 'operations' } });
 const pinned = await completeRun(await api(`/reports/${report.id}/runs`, 'POST', {}));
 const pinnedPdf = await api(`/runs/${pinned.id}/pdf?encoding=base64`);
 assert.match(await textOf(Buffer.from(pinnedPdf.pdf, 'base64')), /Count 13/);
@@ -191,6 +192,88 @@ finally {
   await put('rolesmapping/betterreports_fixture', { users: ['report_owner', 'report_other'] });
   if (previousCompanionMapping) await put('rolesmapping/companion_owner', { users: previousCompanionMapping.users ?? [], backend_roles: previousCompanionMapping.backend_roles ?? [], hosts: previousCompanionMapping.hosts ?? [], and_backend_roles: previousCompanionMapping.and_backend_roles ?? [] });
   else await request('os', '/_plugins/_security/api/rolesmapping/companion_owner', 'DELETE', undefined, 'admin', '');
+}
+// Test the scope against real aggregations. The similar and missing names are deliberate:
+// organization.name must use an exact keyword match, and filters in a saved source
+// cannot widen the mandatory scope.
+for (const [id, name] of [[100, 'operations'], [101, 'finance'], [102, 'finance'], [103, 'operations-extra'], [104, 'Operations'], [105, undefined]]) {
+  await request('os', `/br-fixture-data/_doc/${id}?refresh=true`, 'PUT', { '@timestamp': '2026-09-20T12:00:00Z', environment: 'production', bytes: 1, ...(name ? { organization: { name } } : {}) });
+}
+await so('visualization', 'br-fixture-scope-metric', { attributes: { title: 'Scoped count', visState: JSON.stringify({ type: 'metric', params: {}, aggs: [{ id: '1', enabled: true, type: 'count', schema: 'metric', params: {} }] }), kibanaSavedObjectMeta: { searchSourceJSON: JSON.stringify({ indexRefName: 'index', query: { language: 'kuery', query: '' }, filter: [] }) } }, references: [{ type: 'index-pattern', id: 'br-fixture-index', name: 'index' }] });
+const scopeSource = (await api('/sources/import', 'POST', { type: 'visualization', id: 'br-fixture-scope-metric' }))[0].source;
+const scopeInput = { title: 'Organization scope fixture', timezone: 'UTC', timeRange: { from: '2026-09-19T00:00:00Z', to: '2026-09-21T00:00:00Z' }, query: { language: 'lucene', query: 'organization.name:finance OR organization.name:operations* OR organization.name:Operations' }, filters: [], branding: report.branding, sources: [scopeSource], sections: [{ id: 'scope-count', kind: 'panels', columns: 1, sources: [scopeSource.key] }] };
+await assert.rejects(api('/reports', 'POST', { ...scopeInput, organizationScope: 'finance' }), error => error.status === 403);
+const scopedTenantReport = await api('/reports', 'POST', scopeInput);
+assert.equal(scopedTenantReport.organizationScope, 'operations');
+const scopedTenantRun = await completeRun(await api(`/reports/${scopedTenantReport.id}/runs`, 'POST', {}));
+assert.match(await textOf(Buffer.from((await api(`/runs/${scopedTenantRun.id}/pdf?encoding=base64`)).pdf, 'base64')), /Count 14\b/, 'Tenant queries must exclude other, prefixed, and case-variant organizations');
+await assert.rejects(api(`/reports/${scopedTenantReport.id}`, 'PUT', { revision: scopedTenantReport.revision, report: { ...scopeInput, organizationScope: 'finance' } }), error => error.status === 403);
+const globalSo = (type, id, body) => request('osd', `/api/saved_objects/${type}/${id}?overwrite=true`, 'POST', body, 'admin', '');
+await globalSo('index-pattern', 'br-global-scope-index', { attributes: { title: 'br-fixture-*', timeFieldName: '@timestamp', fields: JSON.stringify([{ name: '@timestamp', type: 'date', searchable: true, aggregatable: true }, { name: 'organization.name', type: 'string', searchable: true, aggregatable: true }]) } });
+await globalSo('visualization', 'br-global-scope-metric', { attributes: { title: 'Global scoped count', visState: JSON.stringify({ type: 'metric', params: {}, aggs: [{ id: '1', enabled: true, type: 'count', schema: 'metric', params: {} }] }), kibanaSavedObjectMeta: { searchSourceJSON: JSON.stringify({ indexRefName: 'index', query: { language: 'kuery', query: '' }, filter: [] }) } }, references: [{ type: 'index-pattern', id: 'br-global-scope-index', name: 'index' }] });
+const globalSource = (await api('/sources/import', 'POST', { type: 'visualization', id: 'br-global-scope-metric' }, 'admin', ''))[0].source;
+const globalInput = { ...scopeInput, title: 'Global organization scope fixture', query: { language: 'kuery', query: '' }, sources: [globalSource], sections: [{ id: 'global-count', kind: 'panels', columns: 1, sources: [globalSource.key] }] };
+const globalContextForScope = await api('/context', 'GET', undefined, 'admin', '');
+assert.equal(globalContextForScope.canSetOrganizationScope, true);
+assert.ok(globalContextForScope.tenantNames.includes('finance'));
+await assert.rejects(api('/reports', 'POST', { ...globalInput, organizationScope: 'unknown-tenant' }, 'admin', ''), error => error.status === 400);
+const financeReport = await api('/reports', 'POST', { ...globalInput, organizationScope: 'finance' }, 'admin', '');
+const financeRun = await completeRun(await api(`/reports/${financeReport.id}/runs`, 'POST', {}, 'admin', ''), 'admin', '');
+assert.match(await textOf(Buffer.from((await api(`/runs/${financeRun.id}/pdf?encoding=base64`, 'GET', undefined, 'admin', '')).pdf, 'base64')), /Count 2\b/, 'Global reports with a selected organization must remain scoped');
+await assert.rejects(api('/reports', 'POST', { ...globalInput, organizationScope: '' }, 'admin', ''), error => error.status === 400);
+const unrestrictedReport = await api('/reports', 'POST', { ...globalInput, organizationScope: '', acknowledgeGlobalScope: true }, 'admin', '');
+assert.equal(unrestrictedReport.organizationScope, '');
+await assert.rejects(api(`/reports/${unrestrictedReport.id}/clone`, 'POST', { revision: unrestrictedReport.revision }, 'admin', ''), error => error.status === 400);
+const unrestrictedRun = await completeRun(await api(`/reports/${unrestrictedReport.id}/runs`, 'POST', {}, 'admin', ''), 'admin', '');
+assert.match(await textOf(Buffer.from((await api(`/runs/${unrestrictedRun.id}/pdf?encoding=base64`, 'GET', undefined, 'admin', '')).pdf, 'base64')), /Count 26\b/, 'Acknowledged Global reports include all organizations and documents with no organization');
+await assert.rejects(api(`/reports/${financeReport.id}`, 'PUT', { revision: financeReport.revision, report: { ...globalInput, organizationScope: '' } }, 'admin', ''), error => error.status === 400);
+const widenedReport = await api(`/reports/${financeReport.id}`, 'PUT', { revision: financeReport.revision, report: { ...globalInput, organizationScope: '' }, acknowledgeGlobalScope: true }, 'admin', '');
+assert.equal(widenedReport.organizationScope, '');
+// Records written before organization scopes existed remain readable for repair,
+// but cannot execute or return an old PDF until a scoped revision is saved.
+const legacyReportId = 'legacy-organization-scope-fixture', legacyRunId = 'legacy-organization-run-fixture';
+await request('os', `/.better-reports-v1-reports/_doc/${legacyReportId}?refresh=true`, 'PUT', { ...scopedTenantReport, id: legacyReportId, organizationScope: undefined });
+await request('os', `/.better-reports-v1-runs/_doc/${legacyRunId}?refresh=true`, 'PUT', { id: legacyRunId, owner: 'report_owner', tenant: 'operations', status: 'complete', artifactId: 'old-artifact', report: { ...scopedTenantReport, organizationScope: undefined } });
+try {
+  assert.equal((await api(`/reports/${legacyReportId}`)).organizationScope, undefined);
+  await assert.rejects(api(`/reports/${legacyReportId}/runs`, 'POST', {}), error => error.status === 409);
+  await assert.rejects(api(`/reports/${legacyReportId}/authorize`, 'POST', { revision: scopedTenantReport.revision }), error => error.status === 409);
+  await assert.rejects(api(`/runs/${legacyRunId}/pdf?encoding=base64`), error => error.status === 409);
+  const repaired = await api(`/reports/${legacyReportId}`, 'PUT', { revision: scopedTenantReport.revision, report: scopeInput });
+  assert.equal(repaired.organizationScope, 'operations');
+} finally {
+  await request('os', `/.better-reports-v1-reports/_doc/${legacyReportId}?refresh=true`, 'DELETE');
+  await request('os', `/.better-reports-v1-runs/_doc/${legacyRunId}?refresh=true`, 'DELETE');
+}
+// A Global-tenant writer still needs the exact companion admin action. Granting
+// that action to a non-all_access role must independently enable the feature.
+const scopeWriterRole = { cluster_permissions: [], index_permissions: [], tenant_permissions: [{ tenant_patterns: ['global_tenant'], allowed_actions: ['kibana_all_write'] }] };
+await put('roles/betterreports_scope_writer_fixture', scopeWriterRole);
+await put('rolesmapping/betterreports_scope_writer_fixture', { users: ['report_other'] });
+try {
+  const deniedContext = await api('/context', 'GET', undefined, 'report_other', '');
+  assert.equal(deniedContext.canWrite, true);
+  assert.equal(deniedContext.canSetOrganizationScope, false);
+  await assert.rejects(api('/reports', 'POST', { ...globalInput, organizationScope: 'finance' }, 'report_other', ''), error => error.status === 403);
+  await put('roles/betterreports_scope_writer_fixture', { ...scopeWriterRole, cluster_permissions: ['cluster:admin/betterreports/admin'] });
+  const permittedContext = await api('/context', 'GET', undefined, 'report_other', '');
+  assert.equal(permittedContext.canSetOrganizationScope, true);
+  assert.ok(permittedContext.tenantNames.includes('finance'));
+  // This synthetic role cannot read the Global saved objects created by admin.
+  // Exercise the exact action through the companion's live grant and aggregation
+  // path without broadening saved-object access for the fixture.
+  const delegatedInput = { reportId: 'delegated-scope-fixture', revision: 1, fingerprint: 'delegated-scope-v1', organizationScope: 'finance', from: '2026-09-19T00:00:00Z', to: '2026-09-21T00:00:00Z',
+    panels: [{ index: 'br-fixture-data', timeField: '@timestamp', body: { size: 0, aggs: { count: { value_count: { field: 'environment' } } } } }] };
+  const delegatedGrant = await request('os', '/_plugins/_better_reports/authorize', 'POST', delegatedInput, 'report_other', '');
+  const execution = { id: delegatedGrant.id, fingerprint: delegatedInput.fingerprint, from: delegatedInput.from, to: delegatedInput.to };
+  const delegatedResult = await request('os', '/_plugins/_better_reports/execute', 'POST', execution, 'betterreports_runner', '');
+  assert.equal(delegatedResult.results[0].hits.total.value, 2, 'Exact admin action permits a selected-organization Global grant outside all_access');
+  await put('roles/betterreports_scope_writer_fixture', scopeWriterRole);
+  await assert.rejects(request('os', '/_plugins/_better_reports/check', 'POST', { id: delegatedGrant.id, fingerprint: delegatedInput.fingerprint }, 'betterreports_runner', ''), error => error.status === 403);
+  await assert.rejects(request('os', '/_plugins/_better_reports/execute', 'POST', execution, 'betterreports_runner', ''), error => error.status === 403);
+  await request('os', '/_plugins/_better_reports/revoke', 'POST', { id: delegatedGrant.id }, 'report_other', '');
+} finally {
+  await put('rolesmapping/betterreports_scope_writer_fixture', { users: [] });
 }
 await writeFile('output/integration/results.json', JSON.stringify({ platform: '3.8.0', senderId: sender.config_id, recipientGroupIds: [group.config_id], distributedWorkers, reportId: report.id, runId: finished.id, pagesExpected: 1, sha256: artifact.sha256, scheduledEmails: mail.count - baselineMailCount, allTypesRunId: allRun.id, dlsCount: 12, pinnedFreshCount: 13, refreshedSum: 7800, checkedAt: new Date().toISOString() }, null, 2));
 console.log('PASS: 3.8.0 installation, source import, PDF generation, owner/tenant isolation, artifact authorization, and scheduled Notifications PDF email. Evidence: output/integration/.');

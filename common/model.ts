@@ -28,6 +28,8 @@ export const sectionSchema = z.discriminatedUnion('kind', [
 ]);
 export const reportSchema = z.object({
   title: text(), timezone: text(), timeRange: z.object({ from: text(), to: text() }).strict(),
+  // Empty string explicitly requests an unrestricted Global report. Missing is never unrestricted.
+  organizationScope: z.string().max(200).optional(),
   query: querySchema.default({ language: 'kuery', query: '' }), filters: z.array(z.record(z.any())).max(100).default([]),
   branding: brandingSchema, sources: z.array(snapshotSchema).max(100), sections: z.array(sectionSchema).min(1).max(100)
 }).strict();

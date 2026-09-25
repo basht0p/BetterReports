@@ -8,7 +8,7 @@ const request = (service,path,method='GET',body,user='report_other') => new Prom
  const req=(service==='os'?https:http).request({hostname:'127.0.0.1',port:service==='os'?19400:15601,path:service==='os'?path:'/br'+path,method,rejectUnauthorized:false,headers:{authorization:`Basic ${Buffer.from(`${user}:${password}`).toString('base64')}`,securitytenant:'operations','osd-xsrf':'fls-fixture','content-type':'application/json'}},res=>{let s='';res.on('data',c=>s+=c);res.on('end',()=>{const d=JSON.parse(s);res.statusCode>=400?reject(new Error(JSON.stringify(d))):resolve(d);});});req.on('error',reject);if(body)req.write(JSON.stringify(body));req.end();
 });
 const put=(path,body)=>request('os','/_plugins/_security/api/'+path,'PUT',body,'admin');
-await put('roles/betterreports_fls_fixture',{cluster_permissions:['cluster_composite_ops'],index_permissions:[{index_patterns:['br-fixture-*'],allowed_actions:['read'],fls:['@timestamp','environment'],dls:JSON.stringify({term:{environment:'production'}})}],tenant_permissions:[{tenant_patterns:['operations'],allowed_actions:['kibana_all_read']}]});
+await put('roles/betterreports_fls_fixture',{cluster_permissions:['cluster_composite_ops'],index_permissions:[{index_patterns:['br-fixture-*'],allowed_actions:['read','indices:admin/mappings/get'],fls:['@timestamp','environment','organization.name'],dls:JSON.stringify({term:{environment:'production'}})}],tenant_permissions:[{tenant_patterns:['operations'],allowed_actions:['kibana_all_read']}]});
 await put('rolesmapping/betterreports_fls_fixture',{users:['report_other']});
 await put('rolesmapping/betterreports_fixture',{users:['report_owner']});
 try {

@@ -66,3 +66,11 @@ The worker-only `invalidate` action retires a persistent grant by exact ID and f
 Dashboards routes add `POST /reports/{id}/authorize` with `{revision}`, `GET /grants`, and `POST /grants/{id}/revoke`. A saved report's authorization is invalidated on edits and refresh. Legacy reports require authorization before scheduled execution. The grant lifetime is explicitly indefinite; IdP membership changes are not automatic grant revocation. Current definitions of captured OpenSearch roles continue to govern data access.
 
 `authorize` also accepts a display title and a `persistent` boolean. Explicit scheduling uses persistent grants. One-off previews/manual runs use temporary permissions; the worker-only `release` action removes only these permissions after a terminal run state. Retried runs keep their temporary permission, and a periodic cleanup recovers releases interrupted by a restart. Released permissions do not affect access to already generated PDFs, which retains interactive owner/tenant/source checks.
+
+## Organization scope (0.1.2)
+
+Organization scope is independent of editable source/report filters. Named tenants derive scope from the authenticated tenant; private tenants derive it from the authenticated username. Global reports persist an explicit organization selection, with an empty string representing unrestricted Global. Global scope selection requires the OpenSearch transport permission `cluster:admin/betterreports/admin`; a browser flag or configured Dashboards administrator role is insufficient.
+
+The companion binds the approved scope to the durable grant and adds the mandatory filter when executing each panel. The reporting interval and source/report query remain additional restrictions. Save requests for unrestricted Global scope require an explicit acknowledgment of the multi-customer warning.
+
+The companion rejects aggregation forms that escape the scoped document set (including `global`, parent/child/nested traversal, and significance background aggregations). Those forms are outside the supported report visualization list. Grant checks and email delivery also reject pre-0.1.2 grants without explicit scope metadata. Global grant execution rechecks the administrator action using the captured roles and their current permission definitions.
