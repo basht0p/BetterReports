@@ -59,3 +59,11 @@ Release 0.0.4 validates Gauge, Goal, Heat Map, Horizontal Bar, Coordinate Map, R
 The renderer fixtures exercise long email-address legends at full and two-column widths, explicit wrapping and pagination, hidden legends, and color-scale visibility. Unit tests check native field hydration from current mappings without source-snapshot mutation, including a keyword multifield omitted from the saved snapshot.
 
 The live suite checks shared report access and cloning within a tenant, read-only tenant permissions, Global-admin inventory, private-tenant isolation, separate per-user runs and PDFs, and retirement of an old authorization after a teammate edits a report. Browser validation should cover the native field/operator/custom-label controls, multiple saved filters, branding tiles, cloning, and persistence of the Hide legend checkbox. Generated renderer fixtures are kept under `target/`; live integration and browser evidence are kept under `output/`.
+
+## 0.1.2 regression coverage
+
+The 46-test unit suite covers tenant-derived and private-tenant organization scope, rejected scope widening, explicit Global selection and save acknowledgment, stale stored reports, grant fingerprints, and permission checks independent of configured inventory roles. TypeScript checking, all 24 exact-platform source contracts, and both plugin package builds pass against OpenSearch/OpenSearch Dashboards 3.8.0.
+
+The disposable integration suites include real aggregation/PDF comparisons for exact, prefixed, case-variant, and missing organization names; Global selection and unrestricted acknowledgment; exact administrator-action authorization; and direct companion rejection of scope tampering, scope-escaping aggregations, and normalized keyword mappings. Browser acceptance should cover the scope selector, acknowledgment reset and clone flow, and left-aligned checkboxes. Interactive browser validation could not be completed in this session because the browser connection failed; UI behavior and CSS received source review.
+
+The 0.1.2 live companion suite passed against the disposable 3.8.0 cluster, including scoped queries with DLS/FLS, required mapping permission, keyword multifields, unsafe mapping and aggregation rejection, grant durability, and revocation. A restart-survival run and the 100-schedule load test were not repeated for this release.

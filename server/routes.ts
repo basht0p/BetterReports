@@ -9,6 +9,7 @@ import { Runner } from './runner';
 import { Store, required } from './store';
 import { validateReport } from './sources';
 import { nextOccurrence, validateCron } from './time';
+import { assertStoredScope, scopeForInput } from './scope';
 
 export interface Services { store: Store; runner: Runner; platform: PlatformAdapter; adminRoles: string[]; }
 export function registerRoutes(router: any, ready: () => Promise<Services>, log: (message: string) => void) {
@@ -38,7 +39,13 @@ export function registerRoutes(router: any, ready: () => Promise<Services>, log:
   const writable = async (s: Services, r: any) => {
     const context = await s.platform.context(r, s.adminRoles);
     if (!context.canWrite) throw new ReportError('TENANT_READ_ONLY', 'Write access to this tenant is required.', 403);
+    if (context.tenant === '' && !context.canSetOrganizationScope) throw new ReportError('FORBIDDEN', 'Global reports require BetterReports administrator permission.', 403);
     return context;
+  };
+  const scopedInput = async (s: Services, r: any, actor: Identity, raw: any, saving: boolean, acknowledged: boolean) => {
+    const input = validateReport(raw);
+    const context = await s.platform.context(r, s.adminRoles);
+    return scopeForInput(input, actor, context.tenantNames ?? [], context.canSetOrganizationScope ?? false, acknowledged, saving);
   };
   const reportForPeer = (report: Report, actor: Identity) => report.grant && (report.grant.authorizedBy ?? report.owner) !== actor.owner ? { ...report, grant: undefined } : report;
   const pauseSchedules = async (s: Services, report: Report) => {
@@ -62,16 +69,18 @@ export function registerRoutes(router: any, ready: () => Promise<Services>, log:
     const reports = await s.store.list<Report>('reports', context.allTenants ? {} : actor.tenant === '__user__' ? actor : { tenant: actor.tenant });
     return reports.map(({ value: report }) => {
       const requiresTenantSwitch = report.tenant !== actor.tenant || (report.tenant === '__user__' && report.owner !== actor.owner);
-      const canWrite = !requiresTenantSwitch && context.canWrite;
+      const canUseScope = report.tenant !== '' || context.canSetOrganizationScope === true;
+      const canWrite = !requiresTenantSwitch && context.canWrite && canUseScope;
       return { id: report.id, title: report.title, revision: report.revision, updatedAt: report.updatedAt, tenant: report.tenant, owner: report.owner,
         branding: { organization: report.branding.organization, logo: report.branding.logo, color: report.branding.color },
-        canEdit: canWrite, canRun: !requiresTenantSwitch, canClone: canWrite, requiresTenantSwitch };
+        canEdit: canWrite, canRun: !requiresTenantSwitch && canUseScope && typeof report.organizationScope === 'string', canClone: canWrite, requiresTenantSwitch };
     });
   });
   add('get', '/reports/{id}', async (s, r, actor) => reportForPeer((await reportRecord(s, r.params.id, actor)).value, actor));
   add('post', '/reports/{id}/authorize', async (s, r, actor) => {
     await writable(s, r);
     const current = await reportRecord(s, r.params.id, actor); revision(r.body.revision, current.value.revision);
+    assertStoredScope(current.value);
     const report = await s.platform.createGrant(current.value, r, true);
     try { await invalidate(s, current.value); }
     catch (error) { await s.platform.grants.call('invalidate', { id: report.grant!.id, fingerprint: report.grant!.fingerprint }); throw error; }
@@ -89,7 +98,8 @@ export function registerRoutes(router: any, ready: () => Promise<Services>, log:
   });
   add('post', '/reports', async (s, r, actor) => {
     await writable(s, r);
-    const input = validateReport(r.body); await s.platform.sources(r).authorize(input.sources);
+    const { acknowledgeGlobalScope, ...definition } = r.body;
+    const input = await scopedInput(s, r, actor, definition, true, acknowledgeGlobalScope === true); await s.platform.sources(r).authorize(input.sources);
     const report: Report = { ...input, ...actor, id: randomUUID(), revision: 1, schemaVersion: 1, updatedAt: new Date().toISOString() };
     await s.store.create('reports', report.id, report); return report;
   });
@@ -98,7 +108,7 @@ export function registerRoutes(router: any, ready: () => Promise<Services>, log:
     const current = await reportRecord(s, r.params.id, actor); revision(r.body.revision, current.value.revision);
     const { id, owner, tenant, revision: _revision, schemaVersion, updatedAt, grant, ...definition } = current.value;
     const title = `${definition.title.slice(0, 193)} (copy)`;
-    const input = validateReport({ ...definition, title });
+    const input = await scopedInput(s, r, actor, { ...definition, title }, true, r.body.acknowledgeGlobalScope === true);
     await s.platform.sources(r).authorize(input.sources);
     const clone: Report = { ...input, ...actor, id: randomUUID(), revision: 1, schemaVersion: 1, updatedAt: new Date().toISOString() };
     await s.store.create('reports', clone.id, clone);
@@ -107,7 +117,7 @@ export function registerRoutes(router: any, ready: () => Promise<Services>, log:
   add('put', '/reports/{id}', async (s, r, actor) => {
     await writable(s, r);
     const current = await reportRecord(s, r.params.id, actor); revision(r.body.revision, current.value.revision);
-    const input = validateReport(r.body.report); await s.platform.sources(r).authorize(input.sources);
+    const input = await scopedInput(s, r, actor, r.body.report, true, r.body.acknowledgeGlobalScope === true); await s.platform.sources(r).authorize(input.sources);
     const report: Report = { ...current.value, ...input, grant: undefined, revision: current.value.revision + 1, updatedAt: new Date().toISOString() };
     await invalidate(s, current.value);
     if (!await s.store.replace('reports', report.id, report, current)) throw new ReportError('CONFLICT', 'The report changed. Reload and retry.', 409); return report;
@@ -121,6 +131,9 @@ export function registerRoutes(router: any, ready: () => Promise<Services>, log:
   add('post', '/reports/{id}/refresh', async (s, r, actor) => {
     await writable(s, r);
     const current = await reportRecord(s, r.params.id, actor); revision(r.body.revision, current.value.revision);
+    assertStoredScope(current.value);
+    const context = await s.platform.context(r, s.adminRoles);
+    scopeForInput(current.value, actor, context.tenantNames ?? [], context.canSetOrganizationScope ?? false, r.body.acknowledgeGlobalScope === true, true);
     const sources = [];
     for (const old of current.value.sources) {
       const results = await s.platform.sources(r).import(old.importRef.type as 'dashboard' | 'visualization', old.importRef.id, old.panelId);
@@ -132,7 +145,7 @@ export function registerRoutes(router: any, ready: () => Promise<Services>, log:
     if (!await s.store.replace('reports', report.id, report, current)) throw new ReportError('CONFLICT', 'The report changed. Reload and retry.', 409); return report;
   });
   add('post', '/preview', async (s, r, actor) => {
-    const input = validateReport(r.body); const report: Report = { ...input, ...actor, id: randomUUID(), revision: 0, schemaVersion: 1, updatedAt: new Date().toISOString() };
+    const input = await scopedInput(s, r, actor, r.body, false, false); const report: Report = { ...input, ...actor, id: randomUUID(), revision: 0, schemaVersion: 1, updatedAt: new Date().toISOString() };
     const authorized = await s.platform.createGrant(report, r); const runId = await s.runner.enqueue(authorized, 'preview', new Date(), undefined, undefined, r); void s.runner.tick(); return { runId };
   });
   add('post', '/reports/{id}/runs', async (s, r, actor) => {
@@ -145,6 +158,7 @@ export function registerRoutes(router: any, ready: () => Promise<Services>, log:
   add('post', '/runs/{id}/cancel', async (s, r, actor) => s.runner.cancel(r.params.id, actor));
   add('get', '/runs/{id}/pdf', async (s, r, actor) => {
     const run = (await ownerRecord<Run>(s, 'runs', r.params.id, actor)).value;
+    assertStoredScope(run.report);
     if (!run.artifactId || !['complete', 'delivery_unknown', 'failed'].includes(run.status)) throw new ReportError('NOT_READY', 'This report does not have a completed PDF.', 409);
     const artifact = await required<Artifact>(s.store, 'artifacts', run.artifactId); assertOwner(artifact.value, actor);
     if (Date.parse(artifact.value.expiresAt) <= Date.now()) throw new ReportError('ARTIFACT_EXPIRED', 'This report has expired. Generate a new report.', 410);
@@ -164,6 +178,7 @@ export function registerRoutes(router: any, ready: () => Promise<Services>, log:
   for (const method of ['post', 'put']) add(method, method === 'post' ? '/schedules' : '/schedules/{id}', async (s, r, actor) => {
     const input = scheduleSchema.parse(method === 'post' ? r.body : r.body.schedule); validateCron(input.cron, input.timezone);
     const report = await reportRecord(s, input.reportId, actor);
+    assertStoredScope(report.value);
     if (input.enabled) {
       if ((report.value.grant?.authorizedBy ?? report.value.owner) !== actor.owner) throw new ReportError('FORBIDDEN', 'Authorize this report yourself before enabling a schedule.', 403);
       await s.platform.grants.check(report.value);
@@ -182,6 +197,7 @@ export function registerRoutes(router: any, ready: () => Promise<Services>, log:
   add('post', '/schedules/{id}/run', async (s, r, actor) => {
     const schedule = (await ownerRecord<Schedule>(s, 'schedules', r.params.id, actor)).value;
     const report = (await reportRecord(s, schedule.reportId, actor)).value;
+    assertStoredScope(report);
     if ((report.grant?.authorizedBy ?? report.owner) !== actor.owner) throw new ReportError('FORBIDDEN', 'Authorize this report yourself before testing a schedule.', 403);
     await s.platform.authorize(report, r); await s.platform.grants.check(report); const runId = await s.runner.enqueue(report, 'test', new Date(), { senderId: schedule.senderId, recipientGroupIds: schedule.recipientGroupIds, subject: schedule.subject, message: schedule.message }, undefined, r, actor.owner); void s.runner.tick(); return { runId };
   });

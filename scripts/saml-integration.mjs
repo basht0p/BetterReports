@@ -27,7 +27,7 @@ const updated=structuredClone(original);
 updated.config.dynamic.authc.basic_internal_auth_domain.http_authenticator.challenge=false;
 updated.config.dynamic.authc.basic_internal_auth_domain.order=0;
 updated.config.dynamic.authc.saml_fixture={http_enabled:true,transport_enabled:false,order:1,http_authenticator:{type:'saml',challenge:true,config:{idp:{metadata_content:metadata,entity_id:issuer},sp:{entity_id:sp},kibana_url:base,roles_key:'Role',exchange_key:randomBytes(48).toString('hex'),jwt:{expiry:'session',jwt_clock_skew_tolerance_seconds:0}}},authentication_backend:{type:'noop'}};
-await put('roles/saml_reporting',{cluster_permissions:JSON.parse(await readFile('companion/roles.json','utf8')).betterreports_user.cluster_permissions,index_permissions:[{index_patterns:['br-fixture-*'],allowed_actions:['read'],dls:'{"term":{"environment":"production"}}'}],tenant_permissions:[{tenant_patterns:['operations'],allowed_actions:['kibana_all_read']}]});
+await put('roles/saml_reporting',{cluster_permissions:JSON.parse(await readFile('companion/roles.json','utf8')).betterreports_user.cluster_permissions,index_permissions:[{index_patterns:['br-fixture-*'],allowed_actions:['read','indices:admin/mappings/get'],dls:'{"term":{"environment":"production"}}'}],tenant_permissions:[{tenant_patterns:['operations'],allowed_actions:['kibana_all_read']}]});
 await put('rolesmapping/saml_reporting',{backend_roles:['saml-reporters']});
 function assertion(groups) {
  const now=new Date(), before=new Date(now-60000).toISOString(), after=new Date(+now+120000).toISOString(), instant=now.toISOString(), id='_br'+randomBytes(12).toString('hex');
@@ -44,13 +44,13 @@ try {
  const exchanged=await request('/_plugins/_security/api/authtoken',{SAMLResponse:assertion(['saml-reporters']),acsEndpoint:acs},null);
  const auth=exchanged.authorization;assert.ok(auth?.startsWith('bearer '),'SAML exchanged for signed JWT');
  const info=await request('/_plugins/_security/authinfo',undefined,auth,'operations','GET');assert.equal(info.user_name,'saml_only_owner');assert.ok(info.roles.includes('saml_reporting'));
- const payload={reportId:'saml-fixture',revision:1,fingerprint:'saml-fixture-1',from:'2026-09-20T00:00:00Z',to:'2026-09-21T00:00:00Z',panels:[{index:'br-fixture-*',timeField:'@timestamp',body:{size:0}}]};
+ const payload={reportId:'saml-fixture',revision:1,fingerprint:'saml-fixture-1',organizationScope:'operations',from:'2026-09-20T00:00:00Z',to:'2026-09-21T00:00:00Z',panels:[{index:'br-fixture-*',timeField:'@timestamp',body:{size:0}}]};
  const grant=await request('/_plugins/_better_reports/authorize',payload,auth);
  await assert.rejects(request('/_plugins/_better_reports/authorize',payload,auth,'finance'),e=>e.status===403);
  await delay(12000);
  await assert.rejects(request('/_plugins/_security/authinfo',undefined,auth,'operations','GET'),e=>e.status===401);
  const result=await request('/_plugins/_better_reports/execute',{id:grant.id,fingerprint:payload.fingerprint,from:payload.from,to:payload.to},basic('betterreports_runner'));
- assert.equal(result.results[0].hits.total.value,13,'SAML owner DLS survives session expiry');
+ assert.equal(result.results[0].hits.total.value,14,'SAML owner DLS and exact organization scope survive session expiry');
  const fixture=JSON.parse(await readFile('output/integration/results.json','utf8'));
  const baseline=(await (await fetch('http://127.0.0.1:18081')).json()).count;
  const delivered=await request('/_plugins/_better_reports/send',{id:grant.id,fingerprint:payload.fingerprint,senderId:fixture.senderId,recipientGroupIds:fixture.recipientGroupIds,subject:'SAML session expired report',message:'Synthetic fixture',runId:'saml-'+Date.now(),filename:'saml-report.pdf',pdf:(await readFile('output/integration/report.pdf')).toString('base64')},basic('betterreports_runner'));
