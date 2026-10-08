@@ -2,7 +2,7 @@
 
 ## Platform
 
-- OpenSearch 3.8.0 and OpenSearch Dashboards 3.8.0 only.
+- OpenSearch 3.9.0 and OpenSearch Dashboards 3.9.0 only. Each BetterReports release supports only the platform version in its version number.
 - Security plugin enabled, ordinary Security tenants, including named tenants.
 - `opensearch_security.multitenancy.enable_aggregation_view: false` and Workspaces disabled.
 - Local OpenSearch data source and ordinary saved index patterns.

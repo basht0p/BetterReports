@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { EuiButton, EuiButtonEmpty, EuiCallOut, EuiSideNav, EuiSuperDatePicker, EuiFormRow, EuiComboBox, EuiDragDropContext, EuiDroppable, EuiDraggable, EuiIcon, EuiConfirmModal } from '@elastic/eui';
 import { ReportInput, Report, Schedule, Snapshot } from '../common/model';
+import { PLATFORM_VERSION } from '../common/version';
 import { ReportFilters } from './report_filters';
 import { TimezonePicker } from './timezone_picker';
 import { PdfPreview } from './pdf_preview';
@@ -83,7 +84,7 @@ export function App({ core, data }: { core: any; data: any }) {
   const scheduleInput = () => ({ reportId: schedule.reportId, cron: schedule.cron, timezone: schedule.timezone, enabled: schedule.enabled, senderId: schedule.senderId, recipientGroupIds: schedule.recipientGroupIds, subject: schedule.subject, message: schedule.message });
   return <main className="br-app">
     <aside className="br-sidebar"><EuiSideNav isOpenOnMobile={navigationOpen} toggleOpenOnMobile={() => setNavigationOpen(!navigationOpen)} aria-label="BetterReports navigation" mobileTitle="BetterReports" items={[{ name: 'BetterReports', id: 'betterreports', items: ['Reports', 'Schedules', 'Run history', 'Authorizations', 'Administration'].map(label => ({ id: label, name: label, isSelected: tab === label || (label === 'Run history' && tab === 'Report preview'), onClick: () => { setNavigationOpen(false); setTab(label); setEditor(false); setSchedule(undefined); void action(async () => { await load(); if (label === 'Schedules') setNotificationOptions(await api('/notification-options')); if (label === 'Authorizations') setGrants((await api('/grants')).grants); if (label === 'Administration') { setHealth(await api('/health')); setAdminSchedules(await api('/admin/schedules')); } }); } })) }]} /></aside><div className="br-main">
-    <header className="br-header"><div className="br-logo">B<span>R</span></div><div><h1>BetterReports</h1><p>Dashboards to documents.</p></div><div className="br-header-right"><span className="br-tag">OpenSearch 3.8.0</span><EuiButton disabled={!canCreateReport} onClick={() => { setTab('Reports'); newReport(); }}>Create report</EuiButton></div></header>
+    <header className="br-header"><div className="br-logo">B<span>R</span></div><div><h1>BetterReports</h1><p>Dashboards to documents.</p></div><div className="br-header-right"><span className="br-tag">OpenSearch {PLATFORM_VERSION}</span><EuiButton disabled={!canCreateReport} onClick={() => { setTab('Reports'); newReport(); }}>Create report</EuiButton></div></header>
 
     {error && <div className="br-message"><EuiCallOut title="Something needs attention" color="danger"><p>{error}</p></EuiCallOut></div>}
     {notice && <div role="status" className="br-notice">{notice}</div>}

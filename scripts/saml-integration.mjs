@@ -57,6 +57,6 @@ try {
  assert.equal(delivered.delivered,true);assert.equal((await (await fetch('http://127.0.0.1:18081')).json()).count,baseline+1);
  await request('/_plugins/_better_reports/revoke',{id:grant.id});
  await assert.rejects(request('/_plugins/_better_reports/execute',{id:grant.id,fingerprint:payload.fingerprint,from:payload.from,to:payload.to},basic('betterreports_runner')),e=>e.status===403);
- await writeFile('output/integration/saml.json',JSON.stringify({version:'3.8.0',signedAssertion:true,internalUserRequired:false,expiredSessionExecution:true,expiredSessionNotificationsDelivery:true,dlsCount:13,crossTenantDenied:true,revocation:true,checkedAt:new Date().toISOString()},null,2));
+ await writeFile('output/integration/saml.json',JSON.stringify({version:'3.9.0',signedAssertion:true,internalUserRequired:false,expiredSessionExecution:true,expiredSessionNotificationsDelivery:true,dlsCount:13,crossTenantDenied:true,revocation:true,checkedAt:new Date().toISOString()},null,2));
  console.log('PASS signed SAML group authorization, session expiry, Notifications attachment delivery, DLS, tenant isolation, and explicit revocation.');
 } finally { await apply(original); }

@@ -37,12 +37,12 @@ for (const [path, pkg] of Object.entries(lock.packages)) {
   try { await cp(resolve(root, path), join(stage, path), { recursive: true, filter: file => !file.endsWith('.map') }); }
   catch (error) { if (!pkg.optional || error.code !== 'ENOENT') throw error; }
 }
-const zipPath = resolve(root, 'build/betterReports-3.8.0.zip');
+const zipPath = resolve(root, 'build/betterReports-3.9.0.zip');
 await new Promise((resolvePromise, reject) => {
   const output = createWriteStream(zipPath), archive = archiver('zip', { zlib: { level: 9 } });
   output.on('close', resolvePromise); output.on('error', reject); archive.on('error', reject);
   archive.pipe(output); archive.directory(stage, 'opensearch-dashboards/betterReports'); void archive.finalize();
 });
 const checksum = createHash('sha256').update(await readFile(zipPath)).digest('hex');
-await writeFile(`${zipPath}.sha256`, `${checksum}  betterReports-3.8.0.zip\n`);
+await writeFile(`${zipPath}.sha256`, `${checksum}  betterReports-3.9.0.zip\n`);
 console.log(`Built ${relative(root, zipPath)}\nSHA-256 ${checksum}`);

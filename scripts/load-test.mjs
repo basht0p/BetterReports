@@ -14,6 +14,9 @@ function api(path, method = 'GET', body, port = 15601, admin = false) {
 }
 for (const port of [15601, 15602]) { let ready = false; for (let i = 0; i < 90; i++) { try { await api('/health', 'GET', undefined, port, true); ready = true; break; } catch { await new Promise(resolve => setTimeout(resolve, 2000)); } } assert.ok(ready, `Instance ${port} did not become ready`); }
 const existing = await api('/schedules'); assert.equal(existing.filter(s => s.enabled).length, 0, 'Pause fixture schedules before the benchmark');
+// Later integration steps edit the fixture report; schedules require a grant for its current revision.
+const current = await api('/reports/' + fixture.reportId);
+if (!current.grant || current.grant.temporary) await api('/reports/' + fixture.reportId + '/authorize', 'POST', { revision: current.revision });
 const now = new Date(), target = new Date(Math.ceil((now.getTime() + 30000) / 60000) * 60000);
 const cron = `${target.getUTCMinutes()} ${target.getUTCHours()} ${target.getUTCDate()} ${target.getUTCMonth() + 1} *`;
 const input = { reportId: fixture.reportId, cron, timezone: 'UTC', enabled: true, senderId: fixture.senderId, recipientGroupIds: fixture.recipientGroupIds, subject: 'BetterReports workload fixture', message: 'Synthetic data' };

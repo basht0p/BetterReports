@@ -3,8 +3,9 @@ import { parseJson, SourceService } from './sources';
 import { GrantClient, grantFingerprint } from './grants';
 import { resolveRange } from './time';
 import { assertStoredScope } from './scope';
+import { PLATFORM_VERSION } from '../common/version';
 
-// SearchSource reads the user's cached UI settings internally. In 3.8.0 its
+// SearchSource reads the user's cached UI settings internally. Since 3.8.0 its
 // Lucene builder spreads a JSON-encoded query-string setting as characters.
 // Repair only nodes that contain that exact spread setting.
 export function normalizeCompiledQueryDsl(query: any, timezone: string, rawOptions: unknown): any {
@@ -37,7 +38,7 @@ export function assertTenantAccess(authInfo: any, tenant: string, write = false)
 }
 
 // All platform-specific calls live here. Contract paths are verified by
-// npm run check:platform against upstream tag 3.8.0 (aa72a981).
+// npm run check:platform against upstream tag 3.9.0 (def668b5).
 export class PlatformAdapter {
   readonly grants: GrantClient;
   constructor(private core: any, private data: any, worker: { username: string; password: string }, private limits: Limits) { this.grants = new GrantClient(core, worker); }
@@ -91,7 +92,7 @@ export class PlatformAdapter {
     const run = { report, ...interval } as Run;
     for (const source of report.sources) await this.query(source, run, new AbortController().signal, request, undefined, { panels, specs });
     let settings = {};
-    try { settings = (await this.core.savedObjects.getScopedClient(request).get('config', '3.8.0')).attributes; } catch (e: any) { if (e?.output?.statusCode !== 404) throw e; }
+    try { settings = (await this.core.savedObjects.getScopedClient(request).get('config', PLATFORM_VERSION)).attributes; } catch (e: any) { if (e?.output?.statusCode !== 404) throw e; }
     const fingerprint = grantFingerprint(report);
     const grant = await this.grants.call('authorize', { reportId: report.id, title: report.title, persistent, revision: report.revision, fingerprint, panels, organizationScope: report.organizationScope, ...interval }, request);
     return { ...report, grant: { id: grant.id, fingerprint, createdAt: grant.createdAt, authorization: 'until_revoked', temporary: !persistent, authorizedBy: grant.owner, specs, settings } };
@@ -114,7 +115,7 @@ export class PlatformAdapter {
     return results;
   }
   private async query(source: Snapshot, run: Run, signal: AbortSignal, request?: any, rawResult?: any, collecting?: { panels: any[]; specs: Record<string, any> }): Promise<PanelData> {
-    const saved = request ? this.core.savedObjects.getScopedClient(request) : { get: async () => ({ id: '3.8.0', type: 'config', attributes: run.report.grant?.settings ?? {} }) };
+    const saved = request ? this.core.savedObjects.getScopedClient(request) : { get: async () => ({ id: PLATFORM_VERSION, type: 'config', attributes: run.report.grant?.settings ?? {} }) };
     const configProxy = new Proxy(saved, { get(target, property) {
       if (property === 'get') return async (type: string, id: string, ...rest: any[]) => {
         const object = await target.get(type, id, ...rest);

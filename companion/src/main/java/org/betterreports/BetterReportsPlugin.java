@@ -44,7 +44,7 @@ import org.opensearch.transport.client.Client;
 import org.opensearch.transport.client.node.NodeClient;
 import org.opensearch.watcher.ResourceWatcherService;
 
-/** Exact 3.8.0 Security adapter. Never accepts identities or roles from REST input. */
+/** Exact 3.9.0 Security adapter. Never accepts identities or roles from REST input. */
 public class BetterReportsPlugin extends Plugin implements ActionPlugin, SystemIndexPlugin, IdentityAwarePlugin {
     static final String INDEX = ".better-reports-grants-v1";
     static final String PREFIX = "cluster:admin/betterreports/";

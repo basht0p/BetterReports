@@ -16,10 +16,10 @@ jobs:
       - run: npm run build:companion
       - uses: actions/upload-artifact@v4
         with:
-          name: BetterReports-3.8.0
+          name: BetterReports-3.9.0
           path: |
-            build/betterReports-3.8.0.zip
-            build/betterReports-3.8.0.zip.sha256
+            build/betterReports-3.9.0.zip
+            build/betterReports-3.9.0.zip.sha256
 
-            build/betterreports-opensearch-3.8.0.zip
-            build/betterreports-opensearch-3.8.0.zip.sha256
+            build/betterreports-opensearch-3.9.0.zip
+            build/betterreports-opensearch-3.9.0.zip.sha256

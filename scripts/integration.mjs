@@ -92,7 +92,10 @@ await put('rolesmapping/betterreports_fixture_readonly', { users: ['report_other
 await put('rolesmapping/betterreports_fixture', { users: ['report_owner'] });
 // The standalone companion suite leaves its own write-capable fixture role mapped.
 const previousCompanionMapping = await request('os', '/_plugins/_security/api/rolesmapping/companion_owner', 'GET', undefined, 'admin', '').then(result => result.companion_owner, error => { if (error.status === 404) return undefined; throw error; });
-await put('rolesmapping/companion_owner', { users: [] });
+// On a fresh cluster the companion suite has not created its role yet.
+const ignoreMissing = error => { if (error.status !== 404) throw error; };
+const unmapCompanion = () => put('rolesmapping/companion_owner', { users: [] }).catch(ignoreMissing);
+await unmapCompanion();
 try {
   const readonly = await api('/context', 'GET', undefined, 'report_other'); assert.equal(readonly.canWrite, false);
   assert.ok((await api('/reports', 'GET', undefined, 'report_other')).some(item => item.id === report.id && !item.canEdit && item.canRun && !item.canClone));
@@ -103,7 +106,7 @@ try {
   await put('rolesmapping/betterreports_fixture', { users: ['report_owner', 'report_other'] });
   await put('rolesmapping/betterreports_fixture_readonly', { users: [] });
   if (previousCompanionMapping) await put('rolesmapping/companion_owner', { users: previousCompanionMapping.users ?? [], backend_roles: previousCompanionMapping.backend_roles ?? [], hosts: previousCompanionMapping.hosts ?? [], and_backend_roles: previousCompanionMapping.and_backend_roles ?? [] });
-  else await request('os', '/_plugins/_security/api/rolesmapping/companion_owner', 'DELETE', undefined, 'admin', '');
+  else await request('os', '/_plugins/_security/api/rolesmapping/companion_owner', 'DELETE', undefined, 'admin', '').catch(ignoreMissing);
 }
 const queued = await api(`/reports/${report.id}/runs`, 'POST', {});
 const finished = await wait('Rendered run', async () => { const run = await api(`/runs/${queued.runId}`); if (run.status === 'failed') throw Object.assign(new Error(JSON.stringify(run.error)), { fatal: true }); return run.status === 'complete' ? run : false; }, 120);
@@ -114,7 +117,7 @@ assert.equal(createHash('sha256').update(pdf).digest('hex'), artifact.sha256);
 async function textOf(bytes) { const doc = await getDocument({ data: new Uint8Array(bytes), isEvalSupported: false }).promise; let text = ''; for (let i = 1; i <= doc.numPages; i++) { const page = await doc.getPage(i); assert.deepEqual(page.view, [0, 0, 612, 792]); text += (await page.getTextContent()).items.map(item => item.str).join(' '); } await doc.destroy(); return text.replace(/\s+/g, ' '); }
 assert.match(await textOf(pdf), /Count 12/);
 await assert.rejects(api(`/runs/${finished.id}/pdf?encoding=base64`, 'GET', undefined, 'report_other'), error => error.status === 404);
-// Exercise every supported visual type and aggregation through real 3.8.0 services.
+// Exercise every supported visual type and aggregation through real 3.9.0 services.
 const metric = (type, i) => ({ id: String(i), enabled: true, type, schema: 'metric', params: type === 'count' ? {} : type === 'cardinality' ? { field: 'environment' } : type === 'percentiles' ? { field: 'bytes', percents: [50, 95] } : { field: 'bytes' } });
 const bucket = (type, params) => ({ id: 'b', enabled: true, type, schema: 'segment', params });
 const cases = [
@@ -136,7 +139,7 @@ for (const [type, aggs] of cases) {
   const id = `br-fixture-${type}`; visualRefs.push({ type: 'visualization', id, name: `panel_${type}` });
   await so('visualization', id, { attributes: { title: `${type} fixture`, visState: JSON.stringify({ type, params: { addLegend: true, isDonut: type === 'pie' }, aggs }), kibanaSavedObjectMeta: { searchSourceJSON: JSON.stringify({ indexRefName: 'index', query: { language: 'kuery', query: '' }, filter: [] }) } }, references: [{ type: 'index-pattern', id: 'br-fixture-index', name: 'index' }] });
 }
-await so('dashboard', 'br-fixture-dashboard', { attributes: { title: 'BetterReports fixtures', panelsJSON: JSON.stringify(visualRefs.map((ref, i) => ({ panelIndex: String(i), panelRefName: ref.name, type: 'visualization', version: '3.8.0', gridData: { x: (i % 2) * 24, y: Math.floor(i / 2) * 15, w: 24, h: 15, i: String(i) }, embeddableConfig: {} }))), kibanaSavedObjectMeta: { searchSourceJSON: JSON.stringify({ query: { language: 'kuery', query: 'bytes >= 0' }, filter: [] }) } }, references: visualRefs });
+await so('dashboard', 'br-fixture-dashboard', { attributes: { title: 'BetterReports fixtures', panelsJSON: JSON.stringify(visualRefs.map((ref, i) => ({ panelIndex: String(i), panelRefName: ref.name, type: 'visualization', version: '3.9.0', gridData: { x: (i % 2) * 24, y: Math.floor(i / 2) * 15, w: 24, h: 15, i: String(i) }, embeddableConfig: {} }))), kibanaSavedObjectMeta: { searchSourceJSON: JSON.stringify({ query: { language: 'kuery', query: 'bytes >= 0' }, filter: [] }) } }, references: visualRefs });
 const panels = await api('/sources/import', 'POST', { type: 'dashboard', id: 'br-fixture-dashboard' });
 assert.ok(panels.every(panel => panel.source), JSON.stringify(panels));
 const { id, owner, tenant, revision, schemaVersion, updatedAt, ...definition } = report;
@@ -158,7 +161,7 @@ await api(`/reports/${report.id}/refresh`, 'POST', { revision: report.revision }
 const refreshed = await completeRun(await api(`/reports/${report.id}/runs`, 'POST', {}));
 assert.match(await textOf(Buffer.from((await api(`/runs/${refreshed.id}/pdf?encoding=base64`)).pdf, 'base64')), /7,?800/);
 let distributedWorkers = [];
-if (process.argv.includes('--multi')) { const queued = await Promise.all(Array.from({ length: 8 }, () => api('/preview', 'POST', allTypes))); const complete = await Promise.all(queued.map(completeRun)); distributedWorkers = [...new Set(complete.map(run => run.worker))]; assert.equal(distributedWorkers.length, 2, 'Both instances should execute shared jobs'); }
+if (process.argv.includes('--multi')) { const queued = await Promise.all(Array.from({ length: 8 }, () => api('/preview', 'POST', allTypes))); const complete = await Promise.all(queued.map(run => completeRun(run))); distributedWorkers = [...new Set(complete.map(run => run.worker))]; assert.equal(distributedWorkers.length, 2, 'Both instances should execute shared jobs'); }
 const baselineMailCount = (await (await fetch('http://127.0.0.1:18081')).json()).count;
 const latestForGrant = await api(`/reports/${report.id}`); await api(`/reports/${report.id}/authorize`, "POST", { revision: latestForGrant.revision });
 const sender = await request('os', '/_plugins/_notifications/configs', 'POST', { config: { name: 'BetterReports fixture sender', config_type: 'smtp_account', is_enabled: true, smtp_account: { host: 'smtp', port: 2525, method: 'none', from_address: 'reports@example.test' } } }, 'report_owner');
@@ -185,13 +188,13 @@ assert.equal((await api(`/reports/${report.id}`)).grant, undefined);
 assert.equal((await api('/schedules')).find(s => s.id === schedule.id).enabled, false);
 await assert.rejects(request('os', '/_plugins/_better_reports/check', 'POST', { id: linkedGrantId, fingerprint: latestBeforePeerEdit.grant.fingerprint }, 'betterreports_runner'), error => error.status === 403);
 await assert.rejects(request('os', '/.better-reports-v1-artifacts/_search', 'POST', { size: 1 }, 'report_owner'), error => error.status === 403);
-await put('rolesmapping/companion_owner', { users: [] });
+await unmapCompanion();
 await put('rolesmapping/betterreports_fixture', { users: ['report_other'] });
 try { await assert.rejects(api(`/runs/${finished.id}/pdf?encoding=base64`), error => error.status === 403); }
 finally {
   await put('rolesmapping/betterreports_fixture', { users: ['report_owner', 'report_other'] });
   if (previousCompanionMapping) await put('rolesmapping/companion_owner', { users: previousCompanionMapping.users ?? [], backend_roles: previousCompanionMapping.backend_roles ?? [], hosts: previousCompanionMapping.hosts ?? [], and_backend_roles: previousCompanionMapping.and_backend_roles ?? [] });
-  else await request('os', '/_plugins/_security/api/rolesmapping/companion_owner', 'DELETE', undefined, 'admin', '');
+  else await request('os', '/_plugins/_security/api/rolesmapping/companion_owner', 'DELETE', undefined, 'admin', '').catch(ignoreMissing);
 }
 // Test the scope against real aggregations. The similar and missing names are deliberate:
 // organization.name must use an exact keyword match, and filters in a saved source
@@ -275,5 +278,5 @@ try {
 } finally {
   await put('rolesmapping/betterreports_scope_writer_fixture', { users: [] });
 }
-await writeFile('output/integration/results.json', JSON.stringify({ platform: '3.8.0', senderId: sender.config_id, recipientGroupIds: [group.config_id], distributedWorkers, reportId: report.id, runId: finished.id, pagesExpected: 1, sha256: artifact.sha256, scheduledEmails: mail.count - baselineMailCount, allTypesRunId: allRun.id, dlsCount: 12, pinnedFreshCount: 13, refreshedSum: 7800, checkedAt: new Date().toISOString() }, null, 2));
-console.log('PASS: 3.8.0 installation, source import, PDF generation, owner/tenant isolation, artifact authorization, and scheduled Notifications PDF email. Evidence: output/integration/.');
+await writeFile('output/integration/results.json', JSON.stringify({ platform: '3.9.0', senderId: sender.config_id, recipientGroupIds: [group.config_id], distributedWorkers, reportId: report.id, runId: finished.id, pagesExpected: 1, sha256: artifact.sha256, scheduledEmails: mail.count - baselineMailCount, allTypesRunId: allRun.id, dlsCount: 12, pinnedFreshCount: 13, refreshedSum: 7800, checkedAt: new Date().toISOString() }, null, 2));
+console.log('PASS: 3.9.0 installation, source import, PDF generation, owner/tenant isolation, artifact authorization, and scheduled Notifications PDF email. Evidence: output/integration/.');

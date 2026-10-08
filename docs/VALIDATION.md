@@ -4,13 +4,13 @@
 
 `npm test` covers date math, timezone validation, DST gaps/repeats, missed-run coalescing, supported/unsupported sources, inherited searches, owner/tenant isolation, revision snapshots, competing workers, email ambiguity, retry date stability, cancellation fencing, revoked access, 100-schedule queue admission, rendering concurrency, Letter dimensions, embedded fonts, absence of screenshot images, chart values, and PDF limits.
 
-`npm run typecheck` checks the application and domain code. Platform entrypoints use a deliberately isolated runtime adapter, so this command is not a substitute for the 3.8.0 deployment test.
+`npm run typecheck` checks the application and domain code. Platform entrypoints use a deliberately isolated runtime adapter, so this command is not a substitute for the 3.9.0 deployment test.
 
 `npm run check:platform` checks the exact source signatures and asset-loader conventions used by the adapter and packager. It is a source-contract check, not a full monorepo typecheck.
 
 `npm run demo` generates a multi-page synthetic report for visual inspection. Render every page to an image and review headers, footers, table repetition, fonts, charts, margins, and overflow. Production acceptance also requires representative real dashboard fixtures.
 
-## Isolated 3.8.0 environment
+## Isolated 3.9.0 environment
 
 The Docker files under `dev/` and scripts `dev-up.mjs` and `integration.mjs` provide a loopback-only local fixture deployment. They create test identities, data, and saved objects on that disposable cluster. They must never be pointed at a production cluster. See the scripts for the fixed local ports and resource names.
 
@@ -71,3 +71,15 @@ The 0.1.2 live companion suite passed against the disposable 3.8.0 cluster, incl
 Live PDF comparisons passed with 14 exact tenant matches, 2 matches for a selected Global organization, and 26 documents for unrestricted Global scope. The fixture includes another organization, a tenant-name prefix, a case variant, and a missing organization. Create, clone, and update acknowledgment checks passed. A separate user without `all_access` successfully authorized and executed a selected-organization Global grant with the exact administrator action; removing that action denied subsequent worker checks and execution. Legacy report execution and old PDF retrieval were rejected; saving a scoped revision repaired the report definition. Evidence is recorded in `output/integration/scope.json`.
 
 Host suspension interrupted the full integration suite's scheduled-mail wait; after recovery, completed scheduled runs and delivery to the local SMTP sink were confirmed. These results do not represent an uninterrupted full-suite pass.
+
+## 3.9.0 platform validation
+
+The 3.9.0 compatibility release passed 46 unit tests, TypeScript checks, and all 24 source contracts against the OpenSearch Dashboards `3.9.0` tag (`def668b5`). The Dashboards data, search, aggregation, tabify, field-format, share, HTTP, plugin-loader, and optimizer code paths used by the adapter are unchanged from 3.8.0. The changes in index-pattern caching, KQL grammar, search bar assistant integration, and CSP nonce handling are additive and do not affect BetterReports. The companion compiles against the official 3.9.0 OpenSearch, Security, and Notifications jars.
+
+The live suites passed on the official `opensearchproject/opensearch:3.9.0` and `opensearchproject/opensearch-dashboards:3.9.0` images. These covered `test:integration`, the two-instance `integration.mjs --multi` run with both workers, `test:companion -- --restart`, `test:saml`, `fls-test.mjs`, `notifications-integration.mjs`, and `load-test.mjs`. In the load test, 100 scheduled PDFs were completed and delivered as 100 distinct emails, with peak concurrency of two per instance, about 262 seconds overall, and a scheduled-to-completion p95 of about 173 seconds. A browser check confirmed that the app, the source import, and the native filter bar render on 3.9.0. An in-place upgrade from a 3.8.0 deployment with existing data was not exercised.
+
+Fixture fixes in this release:
+
+- `integration.mjs` no longer fails on a fresh cluster before the companion suite has created its role.
+- The two-instance run no longer passes array indexes as usernames.
+- The Notifications and load scripts authorize the fixture report's current revision before scheduling it.
