@@ -1,8 +1,8 @@
 # BetterReports
 
-Rendered, branded US Letter PDF reports for **OpenSearch and OpenSearch Dashboards 3.8.0**.
+Rendered, branded US Letter PDF reports for **OpenSearch and OpenSearch Dashboards 3.9.0**.
 
-**Version: 0.1.2 ([release notes](docs/releases/0.1.2.md)).** Build both plugin ZIPs and their SHA-256 checksums using the commands below. The plugin version is `0.1.2`; `3.8.0` in the archive filenames identifies the required OpenSearch platform version.
+**Version: 3.9.0 ([release notes](docs/releases/3.9.0.md)).** Starting with 3.9.0, BetterReports versions match the OpenSearch and OpenSearch Dashboards release they support, like other OpenSearch plugins. Each release supports exactly that platform version. Build both plugin ZIPs and their SHA-256 checksums using the commands below.
 
 BetterReports imports saved dashboards and visualizations into reusable sections, runs approved queries through durable, revocable OpenSearch grants, and produces vector charts and selectable PDF text. The same PDF is used for preview, download, and Notifications email attachments. Scheduled jobs run inside Dashboards; no external worker or browser service is required.
 
@@ -19,22 +19,22 @@ npm run build
 npm run build:companion
 ```
 
-The companion build creates `build/betterreports-opensearch-3.8.0.zip`. Install it on OpenSearch before using the Dashboards plugin. The Dashboards build creates `build/betterReports-3.8.0.zip` and its SHA-256 checksum. The demo creates `output/pdf/BetterReports-demo.pdf` using clearly identified synthetic data.
+The companion build creates `build/betterreports-opensearch-3.9.0.zip`. Install it on OpenSearch before using the Dashboards plugin. The Dashboards build creates `build/betterReports-3.9.0.zip` and its SHA-256 checksum. The demo creates `output/pdf/BetterReports-demo.pdf` using clearly identified synthetic data.
 
-`npm run check:platform` verifies integration contracts against the exact 3.8.0 source at `OSD_HOME` or `.platform/OpenSearch-Dashboards`. `npm run build:platform` performs that check before packaging. The archive uses the 3.8.0 bundle registry and platform-shared React/EUI dependencies; it does not require bootstrapping the complete Dashboards monorepo.
+`npm run check:platform` verifies integration contracts against the exact 3.9.0 source at `OSD_HOME` or `.platform/OpenSearch-Dashboards`. `npm run build:platform` performs that check before packaging. The archive uses the 3.9.0 bundle registry and platform-shared React/EUI dependencies; it does not require bootstrapping the complete Dashboards monorepo.
 
 ## Install
 
 Install the OpenSearch companion on every OpenSearch node, enable `plugins.security.system_indices.enabled: true`, and follow the [deployment guide](docs/DEPLOYMENT.md) for role mappings, the restricted worker identity, and Notifications configuration. Upgrading from 0.0.1 requires removing BetterReports SMTP settings and selecting Notifications senders/groups for existing schedules.
 
 ```sh
-bin/opensearch-plugin install file:///absolute/path/betterreports-opensearch-3.8.0.zip
+bin/opensearch-plugin install file:///absolute/path/betterreports-opensearch-3.9.0.zip
 ```
 
-Install the ZIP into a self-hosted OpenSearch Dashboards **3.8.0** installation, configure the permissions and services described in [Deployment](docs/DEPLOYMENT.md), and restart Dashboards:
+Install the ZIP into a self-hosted OpenSearch Dashboards **3.9.0** installation, configure the permissions and services described in [Deployment](docs/DEPLOYMENT.md), and restart Dashboards:
 
 ```sh
-bin/opensearch-dashboards-plugin install file:///absolute/path/betterReports-3.8.0.zip
+bin/opensearch-dashboards-plugin install file:///absolute/path/betterReports-3.9.0.zip
 ```
 
 The existing Reporting plugin may remain installed. Open **BetterReports** from the navigation menu, or choose **Share → Create BetterReport** from a saved dashboard or visualization.

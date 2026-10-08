@@ -5,6 +5,7 @@ import { Runner } from './runner';
 import { threadedRender } from './threaded_renderer';
 import { registerRoutes, Services } from './routes';
 import { ReportError } from '../common/model';
+import { PLATFORM_VERSION } from '../common/version';
 
 export class BetterReportsPlugin {
   private services?: Services;
@@ -14,7 +15,7 @@ export class BetterReportsPlugin {
   constructor(private context: any) {}
   async setup(core: any, deps: any) {
     this.config = await new Promise(resolve => { const subscription = this.context.config.create().subscribe((value: any) => { resolve(value); queueMicrotask(() => subscription.unsubscribe()); }); });
-    if (this.context.env.packageInfo.version !== '3.8.0') throw new Error('BetterReports requires OpenSearch Dashboards 3.8.0 exactly.');
+    if (this.context.env.packageInfo.version !== PLATFORM_VERSION) throw new Error(`BetterReports requires OpenSearch Dashboards ${PLATFORM_VERSION} exactly.`);
     if (core.workspace.isWorkspaceEnabled()) throw new Error('BetterReports v1 requires Security tenants with Workspaces disabled.');
     const securityConfig: any = await new Promise(resolve => { const subscription = deps.securityDashboards.config$.subscribe((value: any) => { resolve(value); queueMicrotask(() => subscription.unsubscribe()); }); });
     if (!securityConfig.multitenancy.enabled || securityConfig.multitenancy.enable_aggregation_view) throw new Error('BetterReports v1 requires Security multitenancy with enable_aggregation_view: false.');

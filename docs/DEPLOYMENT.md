@@ -2,10 +2,10 @@
 
 ## Requirements
 
-- Self-hosted OpenSearch and OpenSearch Dashboards 3.8.0, with their Security plugins enabled.
+- Self-hosted OpenSearch and OpenSearch Dashboards 3.9.0, with their Security plugins enabled.
 - Standard Security tenant mode. Set `opensearch_security.multitenancy.enabled: true` and `opensearch_security.multitenancy.enable_aggregation_view: false`. Disable Workspaces.
 - The BetterReports OpenSearch companion plugin on every OpenSearch node, and a dedicated worker identity with only the execute/check/release/send/invalidate actions.
-- OpenSearch Notifications and Notifications Core 3.8.0, with an enabled SMTP or SES email sender and email recipient groups. Delivery uses Notifications' transport and TLS settings.
+- OpenSearch Notifications and Notifications Core 3.9.0, with an enabled SMTP or SES email sender and email recipient groups. Delivery uses Notifications' transport and TLS settings.
 - An internal Dashboards storage role with access to BetterReports indices. Ordinary report users should not receive direct access to these indices.
 
 Install the archive with the Dashboards plugin CLI and restart. Install the same version on every Dashboards instance. Keep at least one instance running for schedules. A modest deployment should reserve additional memory for two PDF worker threads (each capped at 256 MiB old-generation memory), chart data, and PDF artifacts.
@@ -44,7 +44,7 @@ The Dashboards internal storage identity is its configured internal OpenSearch u
 
 ## Companion installation and indefinite authorization
 
-Install `build/betterreports-opensearch-3.8.0.zip` on every OpenSearch node using `bin/opensearch-plugin install file:///absolute/path/betterreports-opensearch-3.8.0.zip`, then perform your normal rolling restart. This companion depends on the exact 3.8.0 Security and Notifications plugins. Enable `plugins.security.system_indices.enabled: true` in OpenSearch configuration. The companion registers its grant index as a protected system index. The resource-sharing experimental feature is not required.
+Install `build/betterreports-opensearch-3.9.0.zip` on every OpenSearch node using `bin/opensearch-plugin install file:///absolute/path/betterreports-opensearch-3.9.0.zip`, then perform your normal rolling restart. This companion depends on the exact 3.9.0 Security and Notifications plugins. Enable `plugins.security.system_indices.enabled: true` in OpenSearch configuration. The companion registers its grant index as a protected system index. The resource-sharing experimental feature is not required.
 
 Create the roles in `companion/roles.json` with the Security role API or your configuration management. Map `betterreports_user` to your SAML backend group. Map `betterreports_tenant_manager` only to intended tenant managers; they also need existing tenant access. Map `betterreports_worker` only to the machine identity `betterreports_runner` and inject its password through `BETTER_REPORTS_WORKER_PASSWORD`. No report-owner usernames are needed in OpenSearch configuration.
 
@@ -164,3 +164,14 @@ Report users also need `indices:admin/mappings/get` on the same business-data in
 ```
 
 Use your existing source patterns and preserve any `dls` and `fls` entries. Do not grant this access to the worker identity. Both initial authorization and background execution verify mappings under the report user's captured roles; missing metadata access fails closed. The companion's internal identity remains limited to its protected grant storage.
+
+## Upgrading to 3.9.0
+
+BetterReports 3.9.0 supports only OpenSearch and OpenSearch Dashboards 3.9.0, and its version now matches the platform version. It contains the 0.1.2 features. Upgrade OpenSearch and Dashboards to 3.9.0 by following the official OpenSearch upgrade procedure. Replace both BetterReports plugins in the same maintenance window:
+
+1. Remove the 0.1.2 companion from every OpenSearch node (`bin/opensearch-plugin remove betterreports`). OpenSearch does not start with a plugin built for a different version.
+2. Upgrade OpenSearch, then install `betterreports-opensearch-3.9.0.zip` on every node before restarting it.
+3. Remove the 0.1.2 Dashboards plugin (`bin/opensearch-dashboards-plugin remove betterReports`), upgrade Dashboards, then install `betterReports-3.9.0.zip` on every instance.
+4. Restart, then hard-refresh the browser.
+
+Roles, configuration keys, report definitions, schedules, run history, PDFs, and grants keep their existing formats. Existing authorizations remain valid; do not reauthorize after upgrading. BetterReports reads each user's Advanced Settings from the 3.9.0 Dashboards settings object, which Dashboards creates from the 3.8.0 object the first time the user opens Dashboards after the upgrade. Preview a report from the UI to confirm that BetterReports is using those date and number formats.

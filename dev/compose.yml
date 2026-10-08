@@ -27,7 +27,7 @@ services:
       - opensearch
       - smtp
   smtp:
-    image: opensearchproject/opensearch-dashboards:3.8.0
+    image: opensearchproject/opensearch-dashboards:3.9.0
     entrypoint: [/usr/share/opensearch-dashboards/node/bin/node, /fixtures/smtp.mjs]
     volumes:
       - ./smtp.mjs:/fixtures/smtp.mjs:ro

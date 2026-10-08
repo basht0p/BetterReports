@@ -17,6 +17,9 @@ function request(os, path, method = 'GET', body) {
 }
 const sender = (await request(true, '/' + fixture.senderId)).config_list[0].config;
 const groupId = fixture.recipientGroupIds[0], group = (await request(true, '/' + groupId)).config_list[0].config;
+// Later integration steps edit the fixture report; schedules require a grant for its current revision.
+const current = await request(false, '/reports/' + fixture.reportId);
+if (!current.grant || current.grant.temporary) await request(false, '/reports/' + fixture.reportId + '/authorize', 'POST', { revision: current.revision });
 const schedule = await request(false, '/schedules', 'POST', { reportId: fixture.reportId, cron: '0 0 1 1 *', timezone: 'UTC', enabled: false,
   senderId: fixture.senderId, recipientGroupIds: fixture.recipientGroupIds, subject: 'Notifications live membership fixture', message: 'Synthetic PDF' });
 async function run() {

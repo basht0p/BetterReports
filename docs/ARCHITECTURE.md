@@ -1,6 +1,6 @@
 # Architecture
 
-`public/` contains the React/EUI application and embedded PDF.js viewer. `common/` contains validation schemas and shared record types. `server/platform.ts` isolates the exact OpenSearch Dashboards 3.8.0 integration. Server modules implement source import, records, scheduling, Notifications delivery, and the ECharts/pdfmake renderer.
+`public/` contains the React/EUI application and embedded PDF.js viewer. `common/` contains validation schemas and shared record types. `server/platform.ts` isolates the exact OpenSearch Dashboards 3.9.0 integration. Server modules implement source import, records, scheduling, Notifications delivery, and the ECharts/pdfmake renderer.
 
 ## Execution
 
@@ -17,7 +17,7 @@ All execution results and scheduling metadata are stored in `.better-reports-v1-
 
 The builder exposes native filter controls without a free-text query editor. Existing saved report queries are preserved as read-only, removable saved-filter chips. The native filter picker fetches current, authorized index-pattern field metadata without changing the saved report snapshots. Report queries continue to use the saved source configuration until explicit refresh.
 
-The source adapter uses 3.8.0 `search.searchSource.asScoped`, `search.aggs.asScopedToClient`, `indexPatternsServiceFactory`, and `tabifyAggResponse`. Field definitions and field format mappings are taken from the imported snapshot. Interactive source reads verify current access. Scheduled queries use the authorized snapshots and do not require a new SAML session. Grants are stored separately in the protected `.better-reports-grants-v1` system index and have no expiration.
+The source adapter uses 3.9.0 `search.searchSource.asScoped`, `search.aggs.asScopedToClient`, `indexPatternsServiceFactory`, and `tabifyAggResponse`. Field definitions and field format mappings are taken from the imported snapshot. Interactive source reads verify current access. Scheduled queries use the authorized snapshots and do not require a new SAML session. Grants are stored separately in the protected `.better-reports-grants-v1` system index and have no expiration.
 
 ## API
 

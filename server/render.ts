@@ -3,6 +3,7 @@ import * as echarts from 'echarts';
 import { PDFDocument } from 'pdf-lib';
 import { DateTime } from 'luxon';
 import { Limits, PanelData, ReportError, Run } from '../common/model';
+import { PLATFORM_VERSION } from '../common/version';
 import { countryName, geohashCenter } from './geo';
 
 const vfs = require('pdfmake/build/vfs_fonts');
@@ -167,7 +168,7 @@ export async function renderPdf(run: Run, panels: PanelData[], limits: Limits): 
   }
   const definition: any = {
     pageSize: { width: 612, height: 792 }, pageOrientation: 'portrait', pageMargins: [36, 104, 36, 76],
-    defaultStyle: { font: 'Roboto', fontSize: 10, color: '#243247' }, info: { title: report.title, producer: 'BetterReports 3.8.0.0', creationDate: new Date(run.createdAt) },
+    defaultStyle: { font: 'Roboto', fontSize: 10, color: '#243247' }, info: { title: report.title, producer: `BetterReports ${PLATFORM_VERSION}`, creationDate: new Date(run.createdAt) },
     header: { margin: [36, 22, 36, 0], columns: [
       ...(branding.logo ? [{ image: branding.logo, fit: [80, 48], width: 90 }] : []),
       { width: '*', alignment: branding.alignment, stack: [{ text: branding.organization, bold: true, color: branding.color, fontSize: 12 }, { text: branding.header, fontSize: 9, margin: [0, 3, 0, 0] }] }
