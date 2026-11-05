@@ -10,6 +10,15 @@
 
 Install the archive with the Dashboards plugin CLI and restart. Install the same version on every Dashboards instance. Keep at least one instance running for schedules. A modest deployment should reserve additional memory for two PDF worker threads (each capped at 256 MiB old-generation memory), chart data, and PDF artifacts.
 
+## Container images
+
+Each release publishes images based on the official 3.9.0 images, with the plugins already installed (linux/amd64 and linux/arm64):
+
+- `ghcr.io/basht0p/betterreports-opensearch:3.9.0`: OpenSearch with the BetterReports companion.
+- `ghcr.io/basht0p/betterreports-dashboards:3.9.0`: OpenSearch Dashboards with the BetterReports plugin.
+
+Use them as drop-in replacements for `opensearchproject/opensearch:3.9.0` and `opensearchproject/opensearch-dashboards:3.9.0`. They contain no configuration or credentials, so everything else on this page still applies: mount `opensearch_dashboards.yml` with the `better_reports` settings below, set the worker password environment variable, and configure Security roles and Notifications. The images are built from `docker/` by the release workflow.
+
 ## Configuration
 
 Add to `opensearch_dashboards.yml`:

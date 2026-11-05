@@ -47,6 +47,8 @@ The existing Reporting plugin may remain installed. Open **BetterReports** from 
 
 Source configurations are snapshots. Data is queried anew each run. **Refresh sources** deliberately adopts upstream configuration changes; it operates on the saved report, so save local edits first.
 
+Container images with the plugins preinstalled are published as `ghcr.io/basht0p/betterreports-opensearch:3.9.0` and `ghcr.io/basht0p/betterreports-dashboards:3.9.0`. See [Container images](docs/DEPLOYMENT.md#container-images).
+
 ## Documentation
 
 - [Deployment, SMTP, grants, SAML roles, and operation](docs/DEPLOYMENT.md)
