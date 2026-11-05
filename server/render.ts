@@ -2,7 +2,7 @@ import PdfPrinter from 'pdfmake';
 import * as echarts from 'echarts';
 import { PDFDocument } from 'pdf-lib';
 import { DateTime } from 'luxon';
-import { Limits, PanelData, ReportError, Run } from '../common/model';
+import { Limits, PanelData, ReportError, Run, SEARCH_ROW_LIMIT } from '../common/model';
 import { PLATFORM_VERSION } from '../common/version';
 import { countryName, geohashCenter } from './geo';
 
@@ -106,6 +106,36 @@ function legendNode(entries: LegendEntry[], width: number): any[] {
   }
   return rows;
 }
+// Long unbroken tokens (URLs, hashes, IDs) are given break opportunities so they wrap inside narrow columns.
+const breakable = (text: string) => text.replace(/(\S{24})(?=\S)/g, '$1\u200b');
+export function searchSummary(panel: PanelData) {
+  const shown = panel.rows.length, total = panel.total;
+  const count = (n: number) => n.toLocaleString('en-US');
+  if (total && (total.value > shown || total.relation === 'gte')) return `Showing the first ${count(shown)} of ${total.relation === 'gte' ? 'at least ' : ''}${count(total.value)} matching documents.`;
+  return `${count(shown)} matching document${shown === 1 ? '' : 's'}.`;
+}
+// Columns share the page width in proportion to their typical text length, so short
+// values (status codes, counts) stay narrow and long values (URLs, messages) wrap less.
+export function searchColumnWidths(panel: PanelData, width: number, fontSize: number): number[] {
+  const sample = panel.rows.slice(0, 200), character = fontSize * 0.56, padding = 6;
+  const available = width - panel.columns.length * padding;
+  const longestWord = (text: string) => text.split(/\s+/).reduce((longest, word) => Math.max(longest, word.length), 0);
+  // A column's minimum fits its short values (up to 20 characters) on one line; its target is its average length.
+  const minimum = panel.columns.map((name, index) => Math.min(Math.max(longestWord(name), ...sample.map(row => row[index]?.text.length ?? 0), 3), 20) * character);
+  const target = panel.columns.map((_, index) => Math.max(minimum[index], (sample.length ? sample.reduce((sum, row) => sum + Math.min(row[index]?.text.length ?? 0, 120), 0) / sample.length : 0) * character));
+  const sum = (values: number[]) => values.reduce((total, value) => total + value, 0);
+  if (sum(minimum) >= available) return minimum.map(value => Math.floor(available * value / sum(minimum)));
+  if (sum(target) <= available) return target.map(value => Math.floor(available * value / sum(target)));
+  const extra = target.map((value, index) => value - minimum[index]), spare = available - sum(minimum);
+  return minimum.map((value, index) => Math.floor(value + spare * extra[index] / sum(extra)));
+}
+// Saved searches can return up to 1,000 rows, so they use a compact table whose header repeats on every page.
+function searchNode(panel: PanelData, title: any, color: string) {
+  const fontSize = panel.columns.length > 8 ? 6 : 7;
+  return { stack: [title, { text: searchSummary(panel), fontSize: 8, color: '#64748b', margin: [0, -6, 0, 6] }, { fontSize, table: { headerRows: 1, dontBreakRows: true, widths: searchColumnWidths(panel, 540, fontSize),
+    body: [panel.columns.map(text => ({ text: breakable(text), bold: true, color: 'white', fillColor: color })), ...panel.rows.map(row => row.map(cell => breakable(cell.text)))] },
+    layout: { hLineColor: '#dbe3ed', hLineWidth: () => 0.5, vLineWidth: () => 0, paddingLeft: () => 3, paddingRight: () => 3, paddingTop: () => 2, paddingBottom: () => 2, fillColor: (row: number) => row > 0 && row % 2 === 0 ? '#f1f5f9' : null } }], margin: [0, 0, 0, 18] };
+}
 function panelNode(panel: PanelData, width: number, color: string, hideLegend = false): any {
   if (panel.type === 'table' && Number.isInteger(panel.params.sort?.columnIndex)) {
     const index = panel.params.sort.columnIndex, direction = panel.params.sort.direction === 'desc' ? -1 : 1;
@@ -113,6 +143,7 @@ function panelNode(panel: PanelData, width: number, color: string, hideLegend = 
   }
   const title = { text: panel.title, fontSize: 12, bold: true, color: '#172b4d', margin: [0, 0, 0, 10] };
   if (!panel.rows.length) return { unbreakable: true, stack: [title, { text: 'No data for this reporting period.', color: '#64748b', margin: [0, 12, 0, 20] }] };
+  if (panel.type === 'search') return searchNode(panel, title, color);
   if (panel.type === 'table') return { stack: [title, { fontSize: 9, table: { headerRows: 1, dontBreakRows: true, widths: panel.columns.map(() => '*'), body: [panel.columns.map(text => ({ text, bold: true, color: 'white', fillColor: color })), ...panel.rows.map(row => row.map(cell => cell.text))] }, layout: { hLineColor: '#dbe3ed', vLineWidth: () => 0, paddingTop: () => 6, paddingBottom: () => 6, fillColor: (row: number) => row > 0 && row % 2 === 0 ? '#f1f5f9' : null } }], margin: [0, 0, 0, 18] };
   if (panel.type === 'metric' && panel.rows.length * (panel.columns.length - panel.bucketCount) > 7) throw new ReportError('LAYOUT_LIMIT', 'This metric panel is too tall for one Letter page. Reduce its buckets or use a table.');
   if (panel.type === 'metric') return { unbreakable: true, stack: [title, ...panel.rows.flatMap(row => row.slice(panel.bucketCount).map((cell, i) => ({ stack: [{ text: [...row.slice(0, panel.bucketCount).map(c => c.text), panel.columns[panel.bucketCount + i]].join(' / '), color: '#64748b', fontSize: 9 }, { text: cell.text, color, fontSize: width < 300 ? 24 : 32, bold: true, margin: [0, 3, 0, 12] }] })))], margin: [0, 0, 0, 18] };
@@ -135,7 +166,8 @@ function panelNode(panel: PanelData, width: number, color: string, hideLegend = 
 }
 export async function renderPdf(run: Run, panels: PanelData[], limits: Limits): Promise<{ pdf: Buffer; pages: number }> {
   const report = run.report, branding = report.branding;
-  if (panels.reduce((n, p) => n + (p.type === 'table' ? p.rows.length : 0), 0) > limits.rows) throw new ReportError('QUERY_LIMIT', `The report exceeds ${limits.rows} table rows.`);
+  if (panels.some(p => p.type === 'search' && p.rows.length > SEARCH_ROW_LIMIT)) throw new ReportError('QUERY_LIMIT', `Saved searches are limited to ${SEARCH_ROW_LIMIT} rows.`);
+  if (panels.reduce((n, p) => n + (p.type === 'table' || p.type === 'search' ? p.rows.length : 0), 0) > limits.rows) throw new ReportError('QUERY_LIMIT', `The report exceeds ${limits.rows} table rows.`);
   const period = `${DateTime.fromISO(run.from).setZone(report.timezone).toFormat('LLL d, yyyy HH:mm')} - ${DateTime.fromISO(run.to).setZone(report.timezone).toFormat('LLL d, yyyy HH:mm')} (${report.timezone})`;
   const generated = DateTime.fromISO(run.createdAt).setZone(report.timezone).toFormat('LLL d, yyyy HH:mm ZZZZ');
   const content: any[] = [{ text: report.title, fontSize: 23, bold: true, color: branding.color, margin: [0, 0, 0, 12] }];

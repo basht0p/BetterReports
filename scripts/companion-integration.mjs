@@ -61,6 +61,16 @@ assert.equal(result.results[0].aggregations.hidden.value,0,'FLS hides secret val
 const nextDay = await call('execute',{...run,from:'2026-09-21T00:00:00Z',to:'2026-09-22T00:00:00Z'},'betterreports_runner');
 assert.equal(nextDay.results[0].hits.total.value,0,'Each execution uses its own reporting interval');
 await assert.rejects(call('execute',run,'report_other'),e => e.status===403);
+// Saved searches return documents instead of aggregations, capped at 1,000 rows, with the same scope, DLS, and FLS.
+const searchPanel = { index: 'br-companion-data', timeField: '@timestamp', body: { size: 1000, track_total_hits: true, timeout: '30s', sort: [{ '@timestamp': { order: 'desc', unmapped_type: 'boolean' } }], _source: { includes: ['department', 'secret', 'organization.name'] } } };
+const searchGrant = await call('authorize', { ...input, reportId: 'search-fixture', panels: [searchPanel] });
+const documents = (await call('execute', { id: searchGrant.id, fingerprint: input.fingerprint, from: input.from, to: input.to }, 'betterreports_runner')).results[0];
+assert.equal(documents.hits.total.value, 1, 'Saved search rows apply organization scope and DLS');
+assert.deepEqual(documents.hits.hits.map(hit => hit._source), [{ department: 'operations', organization: { name: 'operations' } }], 'FLS hides secret fields from saved search rows');
+for (const body of [{ ...searchPanel.body, size: 1001 }, { ...searchPanel.body, aggs: { departments: { terms: { field: 'department' } } } }, { size: 0, sort: searchPanel.body.sort },
+  { ...searchPanel.body, sort: [{ _script: { type: 'number', script: { source: 'doc.secret.value' }, order: 'desc' } }] }, { ...searchPanel.body, sort: [{ secret: { order: 'desc', missing: '_first' } }] },
+  { ...searchPanel.body, _source: { excludes: ['department'] } }, { ...searchPanel.body, from: 1000 }, { ...searchPanel.body, docvalue_fields: ['secret'] }])
+  await assert.rejects(call('authorize', { ...input, reportId: 'search-fixture', panels: [{ ...searchPanel, body }] }), e => e.status === 400 || e.status === 403, JSON.stringify(body));
 await assert.rejects(call('execute',{...run, username:'admin'},'betterreports_runner'), e => e.status===400);
 await assert.rejects(call('execute',{...run, fingerprint:'changed'},'betterreports_runner'),e => e.status===403);
 await assert.rejects(call('revoke',{id:grant.id},'report_other'),e => e.status===403);
@@ -98,4 +108,4 @@ try {
 } finally { await put('rolesmapping/betterreports_tenant_manager',{users:[]}); }
 await mkdir('output/integration',{recursive:true});
 await writeFile('output/integration/companion.json',JSON.stringify({version:'3.9.0',grantId:grant.id,restartTested:process.argv.includes('--restart'),tests:['DLS','FLS','worker least privilege','tenant isolation','owner isolation','system index protection','query tampering','tenant organization scope','global aggregation rejection','normalized keyword rejection','keyword multifield exact matching','indefinite membership-independent grant','current role definitions','tenant manager revocation','revocation'],checkedAt:new Date().toISOString()},null,2));
-console.log('PASS companion authorization, DLS/FLS, isolation, indefinite lifetime, and revocation.');
+console.log('PASS companion authorization, saved search rows, DLS/FLS, isolation, indefinite lifetime, and revocation.');

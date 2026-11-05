@@ -150,6 +150,24 @@ const allRun = await completeRun(await api('/preview', 'POST', allTypes));
 const allArtifact = await api(`/runs/${allRun.id}/pdf?encoding=base64`);
 const allPdf = Buffer.from(allArtifact.pdf, 'base64'); await writeFile('output/integration/all-types.pdf', allPdf);
 const allText = await textOf(allPdf); assert.ok(!allText.includes('1789862400000'), 'Dates must use field formatting'); for (const [type] of cases) assert.ok(allText.includes(`${type} fixture`), `Missing ${type}`);
+// Saved searches render their matching documents as a table, in the saved sort order, capped by the row limit (at most 1,000).
+await so('search', 'br-fixture-search', { attributes: { title: 'Large production requests', columns: ['@timestamp', 'environment', 'bytes'], sort: [['bytes', 'desc']], kibanaSavedObjectMeta: { searchSourceJSON: JSON.stringify({ indexRefName: 'kibanaSavedObjectMeta.searchSourceJSON.index', query: { language: 'kuery', query: 'bytes >= 300' }, filter: [] }) } }, references: [{ type: 'index-pattern', id: 'br-fixture-index', name: 'kibanaSavedObjectMeta.searchSourceJSON.index' }] });
+assert.ok((await api('/sources?search=Large')).sources.some(item => item.type === 'search' && item.id === 'br-fixture-search'), 'Saved searches are discoverable');
+const [savedSearch] = await api('/sources/import', 'POST', { type: 'search', id: 'br-fixture-search' }); assert.ok(savedSearch.source, JSON.stringify(savedSearch));
+assert.deepEqual(savedSearch.source.vis.params, { columns: ['@timestamp', 'environment', 'bytes'], sort: [['bytes', 'desc']], rowLimit: 1000 });
+await so('dashboard', 'br-fixture-search-dashboard', { attributes: { title: 'Saved search dashboard', panelsJSON: JSON.stringify([{ panelIndex: 'search-panel', panelRefName: 'panel_0', type: 'search', version: '3.9.0', gridData: { x: 0, y: 0, w: 48, h: 15, i: 'search-panel' }, embeddableConfig: {} }]), kibanaSavedObjectMeta: { searchSourceJSON: JSON.stringify({ query: { language: 'kuery', query: '' }, filter: [] }) } }, references: [{ type: 'search', id: 'br-fixture-search', name: 'panel_0' }] });
+const [dashboardSearch] = await api('/sources/import', 'POST', { type: 'dashboard', id: 'br-fixture-search-dashboard' }); assert.equal(dashboardSearch.source?.type, 'search', JSON.stringify(dashboardSearch));
+const limitedSearch = { ...savedSearch.source, key: 'limited-search', title: 'Top five requests', vis: { ...savedSearch.source.vis, params: { ...savedSearch.source.vis.params, rowLimit: 5 } } };
+const searchSections = (...keys) => keys.map(key => ({ id: `section-${key}`, kind: 'panels', columns: 1, sources: [key] }));
+await assert.rejects(api('/preview', 'POST', { ...definition, title: 'Too many rows', sources: [{ ...limitedSearch, vis: { ...limitedSearch.vis, params: { ...limitedSearch.vis.params, rowLimit: 1001 } } }], sections: searchSections(limitedSearch.key) }), error => error.status === 400, 'Saved searches cannot exceed 1,000 rows');
+const searchRun = await completeRun(await api('/preview', 'POST', { ...definition, title: 'Saved search report', sources: [savedSearch.source, limitedSearch], sections: searchSections(savedSearch.source.key, limitedSearch.key) }));
+const searchPdf = Buffer.from((await api(`/runs/${searchRun.id}/pdf?encoding=base64`)).pdf, 'base64'); await writeFile('output/integration/saved-search.pdf', searchPdf);
+const searchText = (await textOf(searchPdf)).replace(/\s+/g, ' ');
+assert.match(searchText, /Large production requests 9 matching documents\./, 'Production documents with bytes >= 300 (DLS hides development)');
+assert.match(searchText, /Top five requests Showing the first 5 of 9 matching documents\./, 'The row limit caps the table and the PDF states the total');
+assert.ok(!searchText.includes('development'), 'DLS applies to saved search rows');
+assert.ok(!searchText.includes('2026-09-20T12:00:00'), 'Saved search dates use field formatting');
+assert.match(searchText, /Sep 20, 2026 @ 12:00:00\.000 production 1,100 .*production 1,000 .*production 900 /, 'Rows keep the saved sort order and number formatting');
 assert.ok(allText.includes('6,600') || allText.includes('6600'), 'Sum must honor DLS');
 // Change source configuration, then data; snapshots must stay pinned until refresh.
 await so('visualization', 'br-fixture-metric', { attributes: { title: 'Changed sum', visState: JSON.stringify({ type: 'metric', params: {}, aggs: [metric('sum', 1)] }), kibanaSavedObjectMeta: { searchSourceJSON: JSON.stringify({ indexRefName: 'index', query: { language: 'kuery', query: '' }, filter: [] }) } }, references: [{ type: 'index-pattern', id: 'br-fixture-index', name: 'index' }] });

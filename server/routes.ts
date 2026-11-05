@@ -7,7 +7,7 @@ import { Artifact, assertOwner, Identity, Report, ReportError, Run, safeError, S
 import { PlatformAdapter } from './platform';
 import { Runner } from './runner';
 import { Store, required } from './store';
-import { validateReport } from './sources';
+import { SourceType, validateReport } from './sources';
 import { nextOccurrence, validateCron } from './time';
 import { assertStoredScope, scopeForInput } from './scope';
 
@@ -62,7 +62,7 @@ export function registerRoutes(router: any, ready: () => Promise<Services>, log:
   };
   const revision = (received: unknown, current: number) => { if (received !== current) throw new ReportError('CONFLICT', 'The record changed. Reload it before saving.', 409); };
   add('get', '/sources', async (s, r) => s.platform.sources(r).discover(z.string().max(200).parse(r.query.search ?? ''), z.coerce.number().int().min(1).max(1000).parse(r.query.page ?? 1)));
-  add('post', '/sources/import', async (s, r) => { const input = z.object({ type: z.enum(['dashboard', 'visualization']), id: z.string().min(1).max(1000) }).strict().parse(r.body); return s.platform.sources(r).import(input.type, input.id); });
+  add('post', '/sources/import', async (s, r) => { const input = z.object({ type: z.enum(['dashboard', 'visualization', 'search']), id: z.string().min(1).max(1000) }).strict().parse(r.body); return s.platform.sources(r).import(input.type, input.id); });
   add('get', '/context', async (s, r) => s.platform.context(r, s.adminRoles));
   add('get', '/reports', async (s, r, actor) => {
     const context = await s.platform.context(r, s.adminRoles);
@@ -136,9 +136,11 @@ export function registerRoutes(router: any, ready: () => Promise<Services>, log:
     scopeForInput(current.value, actor, context.tenantNames ?? [], context.canSetOrganizationScope ?? false, r.body.acknowledgeGlobalScope === true, true);
     const sources = [];
     for (const old of current.value.sources) {
-      const results = await s.platform.sources(r).import(old.importRef.type as 'dashboard' | 'visualization', old.importRef.id, old.panelId);
+      const results = await s.platform.sources(r).import(old.importRef.type as SourceType, old.importRef.id, old.panelId);
       const replacement = results[0]; if (!replacement?.source || replacement.error) throw new ReportError(replacement?.error?.code ?? 'SOURCE_UNAVAILABLE', replacement?.error?.message ?? 'The source is unavailable.');
-      sources.push({ ...replacement.source, key: old.key });
+      // Refreshing adopts upstream columns and sort, but keeps the report's own row limit.
+      const source = replacement.source.type === 'search' && old.type === 'search' ? { ...replacement.source, vis: { ...replacement.source.vis, params: { ...replacement.source.vis.params, rowLimit: old.vis.params.rowLimit } } } : replacement.source;
+      sources.push({ ...source, key: old.key });
     }
     const report = { ...current.value, sources, grant: undefined, revision: current.value.revision + 1, updatedAt: new Date().toISOString() };
     await invalidate(s, current.value);

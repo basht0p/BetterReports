@@ -146,13 +146,14 @@ test('two-column map and heatmap keep visible color scales inside their chart ar
   await assertBodyTextWithinPage(result.pdf);
 });
 
-test('accepts exactly 20 Letter pages and rejects the 21st without truncation', async () => {
+test('accepts exactly the configured page ceiling and rejects one more page without truncation', async () => {
+  const limits = { ...defaultLimits, pages: 20 };
   const fixture = structuredClone(run); fixture.report.sources = []; fixture.report.sections = [];
   for (let page = 1; page <= 20; page++) {
     if (page > 1) fixture.report.sections.push({ id: `break-${page}`, kind: 'pageBreak' });
     fixture.report.sections.push({ id: `page-${page}`, kind: 'text', text: `Acceptance page ${page}`, style: 'body', bold: false, alignment: 'left' });
   }
-  const pdf = await renderPdf(fixture, [], defaultLimits); assert.equal(pdf.pages, 20);
+  const pdf = await renderPdf(fixture, [], limits); assert.equal(pdf.pages, 20);
   fixture.report.sections.push({ id: 'break-21', kind: 'pageBreak' }, { id: 'page-21', kind: 'text', text: 'This must fail', style: 'body', bold: false, alignment: 'left' });
-  await assert.rejects(renderPdf(fixture, [], defaultLimits), /exceeds 20 pages/);
+  await assert.rejects(renderPdf(fixture, [], limits), /exceeds 20 pages/);
 });

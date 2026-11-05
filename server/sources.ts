@@ -1,9 +1,16 @@
 import { randomUUID } from 'crypto';
-import { ReportError, Snapshot, reportSchema, ReportInput } from '../common/model';
+import { ReportError, Snapshot, reportSchema, ReportInput, SEARCH_ROW_LIMIT } from '../common/model';
 import { validateTimezone, resolveRange } from './time';
 
 export interface SavedObject { id: string; type: string; version?: string; attributes: Record<string, any>; references: Array<{ type: string; id: string; name: string }>; }
 export interface SavedObjects { get(type: string, id: string): Promise<SavedObject>; find(options: any): Promise<any>; }
+export type SourceType = 'dashboard' | 'visualization' | 'search';
+export const sourceTypes: SourceType[] = ['dashboard', 'visualization', 'search'];
+// Saved-search tables use the Letter page width, so keep them legible.
+export const SEARCH_COLUMN_LIMIT = 20;
+export const SEARCH_SORT_LIMIT = 5;
+// Document metadata Discover can show as columns. They are read from the hit, not _source.
+export const searchMetaFields = new Set(['_id', '_index', '_score']);
 const supportedTypes = new Set(['line', 'area', 'histogram', 'horizontal_bar', 'vertical_bar', 'pie', 'metric', 'table', 'gauge', 'goal', 'heatmap', 'tagcloud', 'tile_map', 'region_map']);
 const metrics = new Set(['count', 'sum', 'avg', 'min', 'max', 'cardinality', 'percentiles']);
 const buckets = new Set(['terms', 'date_histogram', 'histogram', 'range', 'filters', 'geohash_grid']);
@@ -23,7 +30,58 @@ export function validateFilters(filters: any[]) {
   };
   filters.forEach(filter => visit(filter, 0));
 }
+// Discover stores no columns, or ['_source'], to show whole documents.
+export function searchColumns(columns: unknown): string[] {
+  if (columns !== undefined && !Array.isArray(columns)) throw new ReportError('INVALID_SOURCE', 'The saved search columns are invalid.');
+  const list = (columns ?? []) as unknown[];
+  if (list.some(column => typeof column !== 'string' || !column)) throw new ReportError('INVALID_SOURCE', 'The saved search columns are invalid.');
+  return list.length ? list as string[] : ['_source'];
+}
+// Saved searches store [[field, direction], ...]; older objects store one [field, direction] pair.
+export function searchSort(sort: unknown): Array<[string, 'asc' | 'desc']> {
+  if (sort === undefined || sort === null || (Array.isArray(sort) && !sort.length)) return [];
+  if (!Array.isArray(sort)) throw new ReportError('INVALID_SOURCE', 'The saved search sort order is invalid.');
+  const pairs = typeof sort[0] === 'string' ? [sort] : sort;
+  return pairs.map((pair: unknown) => {
+    const direction = Array.isArray(pair) ? String(pair[1] ?? '').toLowerCase() : '';
+    if (!Array.isArray(pair) || pair.length !== 2 || typeof pair[0] !== 'string' || !pair[0] || (direction !== 'asc' && direction !== 'desc')) throw new ReportError('INVALID_SOURCE', 'The saved search sort order is invalid.');
+    return [pair[0], direction];
+  });
+}
+function validateIndexPattern(source: Snapshot) {
+  if (source.indexPattern.attributes.dataSourceRef || source.indexPattern.attributes.type === 'rollup') throw new ReportError('UNSUPPORTED_CONFIGURATION', 'Only local, ordinary index patterns are supported.');
+  const formats = parseJson(source.indexPattern.attributes.fieldFormatMap, {});
+  if (Object.values(formats).some((f: any) => !['number', 'bytes', 'percent', 'date', 'string', 'duration'].includes(f.id))) throw new ReportError('UNSUPPORTED_CONFIGURATION', 'This index pattern uses an unsupported field formatter.');
+}
+function validateSearchSnapshot(source: Snapshot) {
+  if (source.vis.type !== 'search' || source.vis.aggs.length) throw new ReportError('INVALID_SOURCE', `${source.title}: saved searches cannot contain aggregations.`);
+  const { columns, sort, rowLimit, ...rest } = source.vis.params;
+  if (Object.keys(rest).length) throw new ReportError('UNSUPPORTED_CONFIGURATION', `${source.title}: unsupported saved search options ${Object.keys(rest).join(', ')}.`);
+  if (!Number.isInteger(rowLimit) || rowLimit < 1 || rowLimit > SEARCH_ROW_LIMIT) throw new ReportError('QUERY_LIMIT', `${source.title}: saved search tables are limited to ${SEARCH_ROW_LIMIT.toLocaleString('en-US')} rows.`);
+  const names = searchColumns(columns), order = searchSort(sort);
+  if (JSON.stringify(names) !== JSON.stringify(columns) || JSON.stringify(order) !== JSON.stringify(sort)) throw new ReportError('INVALID_SOURCE', `${source.title}: the saved search columns or sort order are invalid.`);
+  if (names.length > SEARCH_COLUMN_LIMIT) throw new ReportError('LAYOUT_LIMIT', `${source.title}: saved search tables are limited to ${SEARCH_COLUMN_LIMIT} columns on a Letter page.`);
+  if (new Set(names).size !== names.length) throw new ReportError('INVALID_SOURCE', `${source.title}: saved search columns must be unique.`);
+  if (names.includes('_source') && names.length > 1) throw new ReportError('UNSUPPORTED_CONFIGURATION', `${source.title}: the whole-document column cannot be combined with field columns.`);
+  if (order.length > SEARCH_SORT_LIMIT) throw new ReportError('UNSUPPORTED_CONFIGURATION', `${source.title}: saved searches can sort by at most ${SEARCH_SORT_LIMIT} fields.`);
+  const fields: any[] = parseJson(source.indexPattern.attributes.fields, []);
+  const field = (name: string) => fields.find((f: any) => f.name === name);
+  for (const name of names) {
+    if (name === '_source' || searchMetaFields.has(name)) continue;
+    if (!field(name) || field(name).scripted) throw new ReportError('UNSUPPORTED_CONFIGURATION', `${source.title}: column ${name} is missing or scripted.`);
+  }
+  for (const [name] of order) {
+    if (name === '_score') continue;
+    if (!field(name) || field(name).scripted || field(name).aggregatable === false) throw new ReportError('UNSUPPORTED_CONFIGURATION', `${source.title}: sort field ${name} is missing, scripted, or not sortable.`);
+  }
+  validateIndexPattern(source);
+  validateFilters(source.filters);
+}
 export function validateSnapshot(source: Snapshot) {
+  if (source.type === 'search' || source.vis.type === 'search') {
+    if (source.type !== source.vis.type) throw new ReportError('INVALID_SOURCE', `${source.title}: inconsistent saved search source.`);
+    return validateSearchSnapshot(source);
+  }
   if (!supportedTypes.has(source.vis.type) || source.type !== source.vis.type) throw new ReportError('UNSUPPORTED_VISUALIZATION', `${source.title}: unsupported visualization type ${source.vis.type}.`);
   const aggs = source.vis.aggs.filter(a => a.enabled !== false);
   if (!aggs.length) throw new ReportError('UNSUPPORTED_CONFIGURATION', `${source.title}: no aggregations configured.`);
@@ -45,7 +103,7 @@ export function validateSnapshot(source: Snapshot) {
   if (colors && (typeof colors !== 'object' || Array.isArray(colors) || Object.values(colors).some(color => typeof color !== 'string' || !safeColor.test(color)))) throw new ReportError('UNSUPPORTED_CONFIGURATION', 'Chart colors must be plain colors. Image patterns and external resources are not supported.');
   const fields = parseJson(source.indexPattern.attributes.fields, []);
   if (source.type === 'tile_map' && !fields.some((field: any) => field.name === bucketAggs[0].params?.field && field.type === 'geo_point')) throw new ReportError('UNSUPPORTED_CONFIGURATION', `${source.title}: coordinate maps require a geo_point field.`);
-  if (source.indexPattern.attributes.dataSourceRef || source.indexPattern.attributes.type === 'rollup') throw new ReportError('UNSUPPORTED_CONFIGURATION', 'Only local, ordinary index patterns are supported.');
+  validateIndexPattern(source);
   for (const agg of aggs) {
     if (!metrics.has(agg.type) && !buckets.has(agg.type)) throw new ReportError('UNSUPPORTED_CONFIGURATION', `${source.title}: aggregation ${agg.type} is not supported.`);
     if (!agg.id || ids.has(agg.id)) throw new ReportError('INVALID_SOURCE', 'Aggregation IDs must be unique.');
@@ -61,8 +119,6 @@ export function validateSnapshot(source: Snapshot) {
   if ((source.vis.params?.valueAxes?.length ?? 0) > 1 || source.vis.params?.valueAxes?.some((a: any) => a.scale?.mode === 'percentage' || a.scale?.setYExtents === true)) throw new ReportError('UNSUPPORTED_CONFIGURATION', 'Multiple value axes, percentage axes, and custom axis extents are not supported.');
   if (source.vis.params?.showTotal) throw new ReportError('UNSUPPORTED_CONFIGURATION', 'Table totals are not supported.');
   if (source.vis.params?.seriesParams?.some((s: any) => s.type && s.type !== source.type)) throw new ReportError('UNSUPPORTED_CONFIGURATION', 'Mixed chart types are not supported.');
-  const formats = parseJson(source.indexPattern.attributes.fieldFormatMap, {});
-  if (Object.values(formats).some((f: any) => !['number', 'bytes', 'percent', 'date', 'string', 'duration'].includes(f.id))) throw new ReportError('UNSUPPORTED_CONFIGURATION', 'This index pattern uses an unsupported field formatter.');
   validateFilters(source.filters);
 }
 export function validateReport(value: unknown): ReportInput {
@@ -73,7 +129,7 @@ export function validateReport(value: unknown): ReportInput {
   if (ids.size !== report.sources.length || new Set(report.sections.map(s => s.id)).size !== report.sections.length) throw new ReportError('INVALID_LAYOUT', 'Section and source IDs must be unique.');
   for (const section of report.sections) if (section.kind === 'panels') {
     if (section.sources.length > section.columns || section.sources.some(id => !ids.has(id))) throw new ReportError('INVALID_LAYOUT', 'A panel section references missing sources or exceeds its column count.');
-    if (section.columns === 2 && section.sources.some(id => report.sources.find(s => s.key === id)?.type === 'table')) throw new ReportError('INVALID_LAYOUT', 'Tables require a full-width section.');
+    if (section.columns === 2 && section.sources.some(id => report.sources.find(s => s.key === id)?.type === 'table' || report.sources.find(s => s.key === id)?.type === 'search')) throw new ReportError('INVALID_LAYOUT', 'Tables and saved searches require a full-width section.');
   }
   return report;
 }
@@ -90,26 +146,30 @@ function resolveFilterRefs(filters: any[], object: SavedObject) {
 export class SourceService {
   constructor(private saved: SavedObjects) {}
   async discover(search: string, page = 1) {
-    const result = await this.saved.find({ type: ['dashboard', 'visualization'], search: search ? `${search}*` : undefined, searchFields: ['title'], perPage: 50, page });
+    const result = await this.saved.find({ type: sourceTypes, search: search ? `${search}*` : undefined, searchFields: ['title'], perPage: 50, page });
     return { total: result.total, sources: result.saved_objects.map((o: SavedObject) => ({ id: o.id, type: o.type, title: o.attributes.title })) };
   }
-  async import(type: 'dashboard' | 'visualization', id: string, selectedPanelId?: string) {
+  async import(type: SourceType, id: string, selectedPanelId?: string) {
     const root = await this.saved.get(type, id);
     const results: Array<{ source?: Snapshot; title: string; panelId?: string; error?: { code: string; message: string } }> = [];
-    const panels = type === 'dashboard' ? parseJson(root.attributes.panelsJSON, []) : [{ id, type: 'visualization', panelIndex: id }];
+    const panels = type === 'dashboard' ? parseJson(root.attributes.panelsJSON, []) : [{ id, type, panelIndex: id }];
     for (const panel of panels) {
       const panelId = String(panel.panelIndex ?? panel.explicitInput?.id ?? panel.id);
       if (selectedPanelId && panelId !== selectedPanelId) continue;
       try {
         const referenced = root.references?.find(r => r.name === panel.panelRefName);
-        const visualId = referenced?.id ?? panel.id;
-        if ((referenced?.type ?? panel.type) === 'map') throw new ReportError('UNSUPPORTED_VISUALIZATION', 'Maps application panels are not supported.');
-        if ((referenced?.type ?? panel.type) !== 'visualization' || !visualId) throw new ReportError('UNSUPPORTED_VISUALIZATION', 'Only saved aggregation-based visualizations are supported.');
-        const visual = type === 'visualization' ? root : await this.saved.get('visualization', visualId);
-        const vis = parseJson(visual.attributes.visState, {});
-        if (!supportedTypes.has(vis.type)) throw new ReportError('UNSUPPORTED_VISUALIZATION', `${visual.attributes.title}: unsupported visualization type ${vis.type}.`);
-        const uiState = parseJson(visual.attributes.uiStateJSON, {});
-        if (uiState['vis.colors']) vis.params = { ...vis.params, visColors: { ...uiState['vis.colors'], ...vis.params?.visColors } };
+        const visualId = referenced?.id ?? panel.id, panelType = referenced?.type ?? panel.type;
+        if (panelType === 'map') throw new ReportError('UNSUPPORTED_VISUALIZATION', 'Maps application panels are not supported.');
+        if ((panelType !== 'visualization' && panelType !== 'search') || !visualId) throw new ReportError('UNSUPPORTED_VISUALIZATION', 'Only saved aggregation-based visualizations and saved searches are supported.');
+        const isSearch = panelType === 'search';
+        const visual = type !== 'dashboard' ? root : await this.saved.get(panelType, visualId);
+        let vis: Snapshot['vis'];
+        if (!isSearch) {
+          vis = parseJson(visual.attributes.visState, {});
+          if (!supportedTypes.has(vis.type)) throw new ReportError('UNSUPPORTED_VISUALIZATION', `${visual.attributes.title}: unsupported visualization type ${vis.type}.`);
+          const uiState = parseJson(visual.attributes.uiStateJSON, {});
+          if (uiState['vis.colors']) vis.params = { ...vis.params, visColors: { ...uiState['vis.colors'], ...vis.params?.visColors } };
+        }
         const collected: SavedObject[] = type === 'dashboard' ? [root, visual] : [visual];
         const queries: any[] = [], filters: any[] = [];
         let indexId: string | undefined;
@@ -132,14 +192,16 @@ export class SourceService {
           filters.push(...resolveFilterRefs(dashState.filter ?? [], root));
         }
         const overrides = panel.embeddableConfig ?? panel.explicitInput ?? {};
-        const unsupportedOverrides = Object.keys(overrides).filter(k => !['title', 'hidePanelTitles', 'filters', 'query', 'timeRange', 'id'].includes(k));
+        const allowedOverrides = ['title', 'hidePanelTitles', 'filters', 'query', 'timeRange', 'id', ...(isSearch ? ['columns', 'sort'] : [])];
+        const unsupportedOverrides = Object.keys(overrides).filter(k => !allowedOverrides.includes(k));
         if (unsupportedOverrides.length) throw new ReportError('UNSUPPORTED_CONFIGURATION', `Unsupported panel overrides: ${unsupportedOverrides.join(', ')}.`);
         if (overrides.query?.query) queries.push(overrides.query);
         filters.push(...(overrides.filters ?? []));
-        if (!indexId) throw new ReportError('INVALID_SOURCE', 'The visualization has no local index pattern.');
+        if (isSearch) vis = { type: 'search', params: { columns: searchColumns(overrides.columns ?? visual.attributes.columns), sort: searchSort(overrides.sort ?? visual.attributes.sort), rowLimit: SEARCH_ROW_LIMIT }, aggs: [] };
+        if (!indexId) throw new ReportError('INVALID_SOURCE', isSearch ? 'The saved search has no local index pattern.' : 'The visualization has no local index pattern.');
         const index = await this.saved.get('index-pattern', indexId); collected.push(index);
         if (index.references?.some(r => r.type === 'data-source')) throw new ReportError('UNSUPPORTED_CONFIGURATION', 'Remote data sources are not supported.');
-        const source: Snapshot = { key: randomUUID(), title: overrides.title ?? visual.attributes.title, type: vis.type, vis, refs: collected.map(ref), importRef: ref(root), panelId: type === 'dashboard' ? panelId : undefined, indexPattern: { id: indexId, attributes: index.attributes }, queries, filters };
+        const source: Snapshot = { key: randomUUID(), title: overrides.title ?? visual.attributes.title, type: vis!.type as Snapshot['type'], vis: vis!, refs: collected.map(ref), importRef: ref(root), panelId: type === 'dashboard' ? panelId : undefined, indexPattern: { id: indexId, attributes: index.attributes }, queries, filters };
         validateSnapshot(source); results.push({ source, title: source.title, panelId });
       } catch (e: any) { results.push({ title: panel.title ?? panelId, panelId, error: { code: e instanceof ReportError ? e.code : 'SOURCE_UNAVAILABLE', message: e instanceof ReportError ? e.message : 'Source is missing or inaccessible.' } }); }
     }

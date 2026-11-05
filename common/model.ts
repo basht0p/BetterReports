@@ -5,8 +5,9 @@ export const identitySchema = z.object({ owner: text(), tenant: z.string().max(2
 export type Identity = z.infer<typeof identitySchema>;
 export const querySchema = z.object({ language: z.enum(['kuery', 'lucene']), query: z.string().max(10000) }).strict();
 export const sourceRefSchema = z.object({ type: z.enum(['dashboard', 'visualization', 'search', 'index-pattern']), id: text(1000), version: z.string().optional() }).strict();
+export { SEARCH_ROW_LIMIT } from './limits';
 export const snapshotSchema = z.object({
-  key: text(), title: text(), type: z.enum(['line', 'area', 'histogram', 'horizontal_bar', 'vertical_bar', 'pie', 'metric', 'table', 'gauge', 'goal', 'heatmap', 'tagcloud', 'tile_map', 'region_map']),
+  key: text(), title: text(), type: z.enum(['line', 'area', 'histogram', 'horizontal_bar', 'vertical_bar', 'pie', 'metric', 'table', 'gauge', 'goal', 'heatmap', 'tagcloud', 'tile_map', 'region_map', 'search']),
   refs: z.array(sourceRefSchema).min(1).max(100),
   importRef: sourceRefSchema, panelId: z.string().optional(),
   indexPattern: z.object({ id: text(1000), attributes: z.record(z.unknown()) }),
@@ -53,9 +54,9 @@ export interface Run extends Identity {
 }
 export interface Artifact extends Identity { id: string; runId: string; pdf: string; sha256: string; pages: number; expiresAt: string; }
 export interface Cell { text: string; value: string | number | null; }
-export interface PanelData { key: string; title: string; type: Snapshot['type']; columns: string[]; rows: Cell[][]; bucketCount: number; schemas: string[]; params: Record<string, any>; axis?: { min: number; max: number; interval: number; labels: Record<string, string> }; }
+export interface PanelData { key: string; title: string; type: Snapshot['type']; columns: string[]; rows: Cell[][]; bucketCount: number; schemas: string[]; params: Record<string, any>; total?: { value: number; relation: 'eq' | 'gte' }; axis?: { min: number; max: number; interval: number; labels: Record<string, string> }; }
 export interface Limits { concurrency: number; pages: number; rows: number; bytes: number; timeoutMs: number; artifactDays: number; historyDays: number; schedules: number; }
-export const defaultLimits: Limits = { concurrency: 2, pages: 20, rows: 10000, bytes: 10 * 1024 * 1024, timeoutMs: 300000, artifactDays: 7, historyDays: 30, schedules: 100 };
+export const defaultLimits: Limits = { concurrency: 2, pages: 60, rows: 10000, bytes: 10 * 1024 * 1024, timeoutMs: 300000, artifactDays: 7, historyDays: 30, schedules: 100 };
 export class ReportError extends Error { constructor(public code: string, message: string, public status = 400, public retryable = false) { super(message); } }
 export function assertOwner(record: Identity, actor: Identity) {
   if (record.owner !== actor.owner || record.tenant !== actor.tenant) throw new ReportError('NOT_FOUND', 'Record not found.', 404);
