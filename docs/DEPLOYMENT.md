@@ -29,7 +29,7 @@ better_reports:
   adminRoles: [all_access]
   limits:
     concurrency: 2
-    pages: 20
+    pages: 60
     rows: 10000
     bytes: 10485760
     timeoutMs: 300000

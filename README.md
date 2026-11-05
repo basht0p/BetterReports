@@ -4,7 +4,7 @@ Rendered, branded US Letter PDF reports for **OpenSearch and OpenSearch Dashboar
 
 **Version: 3.9.0 ([release notes](docs/releases/3.9.0.md)).** Starting with 3.9.0, BetterReports versions match the OpenSearch and OpenSearch Dashboards release they support, like other OpenSearch plugins. Each release supports exactly that platform version. Build both plugin ZIPs and their SHA-256 checksums using the commands below.
 
-BetterReports imports saved dashboards and visualizations into reusable sections, runs approved queries through durable, revocable OpenSearch grants, and produces vector charts and selectable PDF text. The same PDF is used for preview, download, and Notifications email attachments. Scheduled jobs run inside Dashboards; no external worker or browser service is required.
+BetterReports imports saved dashboards, visualizations, and saved searches into reusable sections (saved searches become tables of up to 1,000 matching documents), runs approved queries through durable, revocable OpenSearch grants, and produces vector charts and selectable PDF text. The same PDF is used for preview, download, and Notifications email attachments. Scheduled jobs run inside Dashboards; no external worker or browser service is required.
 
 ## Build and validate
 
@@ -37,9 +37,9 @@ Install the ZIP into a self-hosted OpenSearch Dashboards **3.9.0** installation,
 bin/opensearch-dashboards-plugin install file:///absolute/path/betterReports-3.9.0.zip
 ```
 
-The existing Reporting plugin may remain installed. Open **BetterReports** from the navigation menu, or choose **Share → Create BetterReport** from a saved dashboard or visualization.
+The existing Reporting plugin may remain installed. Open **BetterReports** from the navigation menu, or choose **Share → Create BetterReport** from a saved dashboard, visualization, or Discover saved search.
 
-1. Select saved sources and explicitly choose supported panels.
+1. Select saved sources and explicitly choose supported panels. Saved searches add a table of their matching documents (up to 1,000 rows).
 2. Arrange sections, set the reporting interval, and customize branding.
 3. Generate a preview, then save the reusable report definition.
 4. Authorize the saved report for scheduling, then create a schedule with a timezone, recurrence, Notifications email sender, and recipient groups. Authorization lasts indefinitely until revoked.

@@ -1,5 +1,5 @@
-import { Identity, Limits, PanelData, Report, ReportError, Run, Snapshot } from '../common/model';
-import { parseJson, SourceService } from './sources';
+import { Cell, Identity, Limits, PanelData, Report, ReportError, Run, SEARCH_ROW_LIMIT, Snapshot } from '../common/model';
+import { parseJson, searchMetaFields, SourceService } from './sources';
 import { GrantClient, grantFingerprint } from './grants';
 import { resolveRange } from './time';
 import { assertStoredScope } from './scope';
@@ -29,6 +29,78 @@ export function normalizeCompiledQueryDsl(query: any, timezone: string, rawOptio
     }
   }
   return result;
+}
+
+// Saved-search cells are truncated so one document cannot dominate the PDF.
+export const SEARCH_CELL_TEXT_LIMIT = 500;
+const searchFields = (source: Snapshot): any[] => parseJson(source.indexPattern.attributes.fields, []);
+// Multi-fields such as message.keyword are indexed only; their values live under the parent in _source.
+export function searchSourcePath(source: Snapshot, name: string): string {
+  return searchFields(source).find(field => field.name === name)?.subType?.multi?.parent ?? name;
+}
+// The approved hits query for a saved search. The companion re-validates its shape and size.
+export function searchRequestBody(source: Snapshot, query: unknown, timeout: string) {
+  const { columns, sort, rowLimit } = source.vis.params as { columns: string[]; sort: Array<[string, 'asc' | 'desc']>; rowLimit: number };
+  const timeField = source.indexPattern.attributes.timeFieldName;
+  const order = sort.length ? sort : typeof timeField === 'string' && timeField ? [[timeField, 'desc'] as [string, 'asc' | 'desc']] : [];
+  const paths = [...new Set(columns.filter(column => column !== '_source' && !searchMetaFields.has(column)).map(column => searchSourcePath(source, column)))];
+  return {
+    query, size: Math.min(rowLimit, SEARCH_ROW_LIMIT), track_total_hits: true, timeout,
+    // unmapped_type keeps index patterns spanning indices without the sort field working, as in Discover.
+    sort: order.map(([field, direction]) => field === '_score' ? { _score: { order: direction } } : { [field]: { order: direction, unmapped_type: 'boolean' } }),
+    _source: columns.includes('_source') ? true : paths.length ? { includes: paths } : false
+  };
+}
+// Reads a field from _source whether it is stored as nested objects, dotted keys, or arrays of objects.
+export function sourceValue(value: any, path: string): any {
+  if (value === null || value === undefined) return undefined;
+  if (Array.isArray(value)) {
+    const values = value.map(item => sourceValue(item, path)).flat().filter(item => item !== undefined);
+    return values.length ? values : undefined;
+  }
+  if (typeof value !== 'object') return undefined;
+  if (Object.prototype.hasOwnProperty.call(value, path)) return value[path];
+  const parts = path.split('.');
+  for (let index = parts.length - 1; index >= 1; index--) {
+    const head = parts.slice(0, index).join('.');
+    if (Object.prototype.hasOwnProperty.call(value, head)) { const found = sourceValue(value[head], parts.slice(index).join('.')); if (found !== undefined) return found; }
+  }
+  return undefined;
+}
+const truncate = (text: string, limit: number) => text.length > limit ? `${text.slice(0, limit - 1)}…` : text;
+function flattenSource(value: any, prefix: string, out: Array<[string, any]>) {
+  for (const [key, child] of Object.entries(value ?? {})) {
+    const name = prefix ? `${prefix}.${key}` : key;
+    if (child && typeof child === 'object' && !Array.isArray(child)) flattenSource(child, name, out); else out.push([name, child]);
+  }
+  return out;
+}
+// Converts saved-search hits into table cells using the index pattern's field formatters.
+export function searchTable(source: Snapshot, hits: any[], format: (field: string, value: unknown) => string): Pick<PanelData, 'columns' | 'rows'> {
+  const columns: string[] = source.vis.params.columns;
+  const render = (field: string, value: any): string => {
+    if (value === null || value === undefined) return '-';
+    if (Array.isArray(value)) return value.length ? value.map(item => render(field, item)).join(', ') : '-';
+    if (typeof value === 'object') return JSON.stringify(value);
+    try { return format(field, value); } catch { return String(value); }
+  };
+  const cell = (field: string, value: any, limit = SEARCH_CELL_TEXT_LIMIT): Cell => ({ text: truncate(render(field, value), limit), value: typeof value === 'number' || typeof value === 'string' ? value : null });
+  const rows = hits.slice(0, SEARCH_ROW_LIMIT).map(hit => {
+    if (columns.includes('_source')) {
+      const text = flattenSource(hit._source, '', []).map(([field, value]) => `${field}: ${render(field, value)}`).join('; ');
+      return [{ text: truncate(text || '-', SEARCH_CELL_TEXT_LIMIT * 2), value: null }];
+    }
+    return columns.map(column => cell(column, searchMetaFields.has(column) ? hit[column] : sourceValue(hit._source, searchSourcePath(source, column))));
+  });
+  return { columns: columns.includes('_source') ? ['Document'] : columns, rows };
+}
+function queryError(error: any) {
+  if (error instanceof ReportError) return error;
+  const status = error?.meta?.statusCode ?? error?.statusCode;
+  if (status === 401 || status === 403) return new ReportError('PERMISSION_DENIED', 'The owner no longer has permission to query this data.', 403);
+  if (status === 429 || status >= 500 || ['ConnectionError', 'TimeoutError'].includes(error?.name)) return new ReportError('QUERY_UNAVAILABLE', 'OpenSearch could not complete the query. A retry will use the same reporting interval.', 503, true);
+  if (status === 400) return new ReportError('INVALID_QUERY', 'OpenSearch rejected the saved query or aggregation configuration. Review the source and report filters.');
+  return error;
 }
 
 export function assertTenantAccess(authInfo: any, tenant: string, write = false) {
@@ -135,6 +207,7 @@ export class PlatformAdapter {
       const { IndexPattern } = require('../../../src/plugins/data/common/index_patterns/index_patterns/index_pattern');
       pattern = new IndexPattern({ spec: run.report.grant!.specs[source.key], fieldFormats: formatRegistry });
     }
+    if (source.type === 'search') return this.querySearch(source, run, signal, pattern, uiSettings, request, rawResult, collecting);
     const aggsService = await this.data.search.aggs.asScopedToClient(configProxy);
     const aggs = aggsService.createAggConfigs(pattern, source.vis.aggs.filter(a => a.enabled !== false));
     aggs.setTimeRange({ from: run.from, to: run.to });
@@ -199,12 +272,42 @@ export class PlatformAdapter {
         schemas: table.columns.map((col: any) => col.aggConfig.schema),
         rows: table.rows.map((row: any) => table.columns.map((col: any, index: number) => ({ value: row[col.id] ?? null, text: row[col.id] == null ? '-' : String(formatters[index](row[col.id])) }))) };
     } catch (error: any) {
-      if (error instanceof ReportError) throw error;
-      const status = error?.meta?.statusCode ?? error?.statusCode;
-      if (status === 401 || status === 403) throw new ReportError('PERMISSION_DENIED', 'The owner no longer has permission to query this data.', 403);
-      if (status === 429 || status >= 500 || ['ConnectionError', 'TimeoutError'].includes(error?.name)) throw new ReportError('QUERY_UNAVAILABLE', 'OpenSearch could not complete the query. A retry will use the same reporting interval.', 503, true);
-      if (status === 400) throw new ReportError('INVALID_QUERY', 'OpenSearch rejected the saved query or aggregation configuration. Review the source and report filters.');
-      throw error;
+      throw queryError(error);
     } finally { search?.destroy(); }
+  }
+  // Saved searches return matching documents (at most SEARCH_ROW_LIMIT) instead of aggregations.
+  private async querySearch(source: Snapshot, run: Run, signal: AbortSignal, pattern: any, uiSettings: any, request?: any, rawResult?: any, collecting?: { panels: any[]; specs: Record<string, any> }): Promise<PanelData> {
+    if (request) {
+      const sources = await this.data.search.searchSource.asScoped(request);
+      let search = sources.createEmpty();
+      try {
+        search.setField('index', pattern);
+        for (const query of [...source.queries, run.report.query].filter(q => q.query)) {
+          search.setField('query', query); search = search.createChild();
+        }
+        // The companion adds the absolute reporting range at execution time.
+        search.setField('filter', [...source.filters, ...run.report.filters]); search.setField('size', 0);
+        signal.throwIfAborted();
+        const compiled = await search.getSearchRequestBody();
+        const query = normalizeCompiledQueryDsl(compiled.query, run.report.timezone, await uiSettings.get('query:queryString:options'));
+        collecting!.panels.push({ index: pattern.title, body: searchRequestBody(source, query, `${Math.max(1, Math.floor(this.limits.timeoutMs / 1000) - 5)}s`), timeField: pattern.timeFieldName ?? '' });
+        return {} as PanelData;
+      } catch (error: any) { throw queryError(error); }
+      finally { search.destroy(); }
+    }
+    try {
+      const raw = rawResult;
+      if (raw.timed_out || raw._shards?.failed) throw new ReportError('QUERY_INCOMPLETE', 'The query timed out or returned failed shards.', 503, true);
+      const hits: any[] = raw.hits?.hits ?? [];
+      if (hits.length > SEARCH_ROW_LIMIT) throw new ReportError('QUERY_LIMIT', `Saved searches are limited to ${SEARCH_ROW_LIMIT} rows.`);
+      const format = (name: string, value: unknown) => {
+        const field = pattern.fields?.getByName?.(name);
+        return field && typeof pattern.getFormatterForField === 'function' ? String(pattern.getFormatterForField(field).convert(value, 'text')) : String(value);
+      };
+      const total = raw.hits?.total;
+      return { key: source.key, title: source.title, type: 'search', params: source.vis.params, bucketCount: 0, schemas: [],
+        total: typeof total === 'object' && total ? { value: Number(total.value), relation: total.relation === 'gte' ? 'gte' : 'eq' } : { value: Number(total ?? hits.length), relation: 'eq' },
+        ...searchTable(source, hits, format) };
+    } catch (error: any) { throw queryError(error); }
   }
 }

@@ -13,7 +13,7 @@ export class BetterReportsPublicPlugin {
         return () => ReactDOM.unmountComponentAtNode(params.element);
       } });
     deps.share?.register({ id: 'betterReports', getShareMenuItems: (context: any) => {
-      if (!context.objectId || !['dashboard', 'visualization'].includes(context.objectType)) return [];
+      if (!context.objectId || !['dashboard', 'visualization', 'search'].includes(context.objectType)) return [];
       return [{ shareMenuItem: { name: 'Create BetterReport', icon: 'document', disabled: context.isDirty,
         toolTipContent: context.isDirty ? 'Save your changes before creating a report.' : undefined,
         onClick: () => { context.onClose(); window.location.assign(core.http.basePath.prepend(`/app/betterReports?sourceType=${context.objectType}&sourceId=${encodeURIComponent(context.objectId)}`)); } }, panel: { id: 'betterReports', title: 'BetterReports', items: [] } }];

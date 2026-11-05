@@ -48,6 +48,8 @@ import org.opensearch.watcher.ResourceWatcherService;
 public class BetterReportsPlugin extends Plugin implements ActionPlugin, SystemIndexPlugin, IdentityAwarePlugin {
     static final String INDEX = ".better-reports-grants-v1";
     static final String PREFIX = "cluster:admin/betterreports/";
+    // Matches SEARCH_ROW_LIMIT in common/limits.ts: the most documents a saved-search panel may return.
+    static final int SEARCH_ROW_LIMIT = 1000;
     static final List<String> OPS = List.of("authorize", "execute", "check", "revoke", "list", "release", "invalidate", "notifications", "send", "admin");
     private Service service;
     public BetterReportsPlugin(Settings settings) {
@@ -278,11 +280,37 @@ public class BetterReportsPlugin extends Plugin implements ActionPlugin, SystemI
             keys(panel, "index", "body", "timeField"); String index = string(panel, "index");
             require(!index.contains(":") && !index.startsWith(".") && !index.equals("*") && !index.contains(","), "Only explicit local business-data index patterns are allowed");
             require(panel.get("body") instanceof Map, "Query body required"); Map<String,Object> body = (Map<String,Object>)panel.get("body");
-            keys(body, "query", "aggs", "aggregations", "size", "track_total_hits", "timeout");
-            require(((Number)body.getOrDefault("size", 0)).intValue() == 0, "Aggregation-only reports are supported");
+            keys(body, "query", "aggs", "aggregations", "size", "track_total_hits", "timeout", "sort", "_source");
+            Object size = body.getOrDefault("size", 0);
+            require(size instanceof Integer || size instanceof Long, "Invalid result size");
+            long hits = ((Number)size).longValue();
+            // Saved searches return documents, capped at SEARCH_ROW_LIMIT. Everything else is aggregation-only.
+            require(hits >= 0 && hits <= SEARCH_ROW_LIMIT, "Saved search results are limited to " + SEARCH_ROW_LIMIT + " rows");
+            if (hits == 0) require(!body.containsKey("sort") && !body.containsKey("_source"), "Aggregation-only reports cannot request documents");
+            else { require(!body.containsKey("aggs") && !body.containsKey("aggregations"), "Saved search results cannot include aggregations"); validateSort(body.get("sort")); validateSourceFilter(body.get("_source")); }
             rejectScripts(body);
             rejectScopeEscapingAggregations(body.get("aggs"));
             rejectScopeEscapingAggregations(body.get("aggregations"));
+        }
+        void validateSort(Object value) {
+            if (value == null) return;
+            require(value instanceof List<?> && ((List<?>)value).size() <= 5, "Invalid sort");
+            for (Object entry : (List<?>)value) {
+                require(entry instanceof Map<?,?> && ((Map<?,?>)entry).size() == 1, "Invalid sort");
+                var sort = ((Map<?,?>)entry).entrySet().iterator().next();
+                require(sort.getKey() instanceof String field && !field.isEmpty() && field.length() <= 1000 && !Set.of("_script", "_geo_distance").contains(field), "Invalid sort field");
+                require(sort.getValue() instanceof Map<?,?>, "Invalid sort");
+                Map<?,?> options = (Map<?,?>)sort.getValue();
+                for (Object option : options.keySet()) require(Set.of("order", "unmapped_type").contains(option), "Unsupported sort option");
+                require(Set.of("asc", "desc").contains(options.get("order")), "Invalid sort order");
+                require(!options.containsKey("unmapped_type") || "boolean".equals(options.get("unmapped_type")), "Invalid sort option");
+            }
+        }
+        void validateSourceFilter(Object value) {
+            if (value == null || value instanceof Boolean) return;
+            require(value instanceof Map<?,?>, "Invalid source filter");
+            Map<?,?> filter = (Map<?,?>)value;
+            require(filter.size() == 1 && filter.get("includes") instanceof List<?> includes && includes.size() <= 20 && includes.stream().allMatch(field -> field instanceof String name && !name.isEmpty() && name.length() <= 1000), "Invalid source filter");
         }
         void rejectScripts(Object value) {
             if (value instanceof Map<?,?> map) { for (var entry : map.entrySet()) { require(!Set.of("script", "script_fields", "runtime_mappings", "terms_lookup", "percolate", "more_like_this").contains(entry.getKey()), "Executable or external query content is not supported"); rejectScripts(entry.getValue()); } }
@@ -365,7 +393,8 @@ public class BetterReportsPlugin extends Plugin implements ActionPlugin, SystemI
             if (panel.get("timeField") instanceof String field && !field.isEmpty()) filters.add(Map.of("range", Map.of(field, Map.of("gte", from, "lte", to, "format", "strict_date_optional_time"))));
             if (!scope.isEmpty()) filters.add(Map.of("term", Map.of(organizationField(string(panel, "index")), Map.of("value", scope))));
             body.put("query", Map.of("bool", Map.of("filter", filters)));
-            body.put("size", 0); body.put("timeout", "240s"); body.put("track_total_hits", true);
+            // validatePanel has already bounded size to 0 (aggregations) or 1..SEARCH_ROW_LIMIT (saved searches).
+            body.put("size", Math.min(((Number)body.getOrDefault("size", 0)).intValue(), SEARCH_ROW_LIMIT)); body.put("timeout", "240s"); body.put("track_total_hits", true);
             try (XContentParser parser = XContentType.JSON.xContent().createParser(registry, DeprecationHandler.THROW_UNSUPPORTED_OPERATION, json(body))) {
                 var response = client.search(new SearchRequest(string(panel, "index")).source(SearchSourceBuilder.fromXContent(parser)).allowPartialSearchResults(false)).actionGet();
                 if (response.isTimedOut() || response.getFailedShards() > 0) throw new IllegalStateException("Query incomplete");
