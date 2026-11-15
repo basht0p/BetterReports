@@ -56,7 +56,7 @@ jobs:
             ${{ steps.version.outputs.image_prefix }}-opensearch:latest
           labels: |
             org.opencontainers.image.title=BetterReports OpenSearch
-            org.opencontainers.image.description=OpenSearch ${{ steps.version.outputs.version }} with the BetterReports companion plugin
+            org.opencontainers.image.description=OpenSearch with the BetterReports companion plugin ${{ steps.version.outputs.version }}
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.version=${{ steps.version.outputs.version }}
             org.opencontainers.image.revision=${{ github.sha }}
@@ -73,7 +73,7 @@ jobs:
             ${{ steps.version.outputs.image_prefix }}-dashboards:latest
           labels: |
             org.opencontainers.image.title=BetterReports OpenSearch Dashboards
-            org.opencontainers.image.description=OpenSearch Dashboards ${{ steps.version.outputs.version }} with the BetterReports plugin
+            org.opencontainers.image.description=OpenSearch Dashboards with the BetterReports plugin ${{ steps.version.outputs.version }}
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.version=${{ steps.version.outputs.version }}
             org.opencontainers.image.revision=${{ github.sha }}

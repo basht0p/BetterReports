@@ -83,3 +83,9 @@ Fixture fixes in this release:
 - `integration.mjs` no longer fails on a fresh cluster before the companion suite has created its role.
 - The two-instance run no longer passes array indexes as usernames.
 - The Notifications and load scripts authorize the fixture report's current revision before scheduling it.
+
+## 3.9.0.1 security release validation
+
+The 3.9.0.1 release passed 54 unit tests and TypeScript checks, and `npm audit` reports no known vulnerabilities for the lockfile. A new unit test sends 200,000-element arrays to the report schema and requires at most a handful of validation issues. Both plugin ZIPs were built, and both release Dockerfiles installed them on the official 3.9.0 images, where the plugins report version 3.9.0.1. The Dashboards ZIP written by the new packager was extracted and compared with the staged build directory; the contents were identical.
+
+`npm run test:integration` passed against the official `opensearchproject/opensearch:3.9.0` and `opensearchproject/opensearch-dashboards:3.9.0` images. A live 2.4 MB report body with 150,000 sections returned HTTP 400 with a single `sections` issue in under half a second. The companion, SAML, two-instance, FLS, load, and Notifications suites were not repeated; the companion's code is unchanged and the Dashboards change is limited to the validation library.

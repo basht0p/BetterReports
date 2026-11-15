@@ -10,9 +10,9 @@ export const snapshotSchema = z.object({
   key: text(), title: text(), type: z.enum(['line', 'area', 'histogram', 'horizontal_bar', 'vertical_bar', 'pie', 'metric', 'table', 'gauge', 'goal', 'heatmap', 'tagcloud', 'tile_map', 'region_map', 'search']),
   refs: z.array(sourceRefSchema).min(1).max(100),
   importRef: sourceRefSchema, panelId: z.string().optional(),
-  indexPattern: z.object({ id: text(1000), attributes: z.record(z.unknown()) }),
-  vis: z.object({ type: z.string(), params: z.record(z.any()), aggs: z.array(z.any()).max(30) }),
-  queries: z.array(querySchema).max(30), filters: z.array(z.record(z.any())).max(100)
+  indexPattern: z.object({ id: text(1000), attributes: z.record(z.string(), z.unknown()) }),
+  vis: z.object({ type: z.string(), params: z.record(z.string(), z.any()), aggs: z.array(z.any()).max(30) }),
+  queries: z.array(querySchema).max(30), filters: z.array(z.record(z.string(), z.any())).max(100)
 }).strict();
 export type Snapshot = z.infer<typeof snapshotSchema>;
 export const brandingSchema = z.object({
@@ -31,7 +31,7 @@ export const reportSchema = z.object({
   title: text(), timezone: text(), timeRange: z.object({ from: text(), to: text() }).strict(),
   // Empty string explicitly requests an unrestricted Global report. Missing is never unrestricted.
   organizationScope: z.string().max(200).optional(),
-  query: querySchema.default({ language: 'kuery', query: '' }), filters: z.array(z.record(z.any())).max(100).default([]),
+  query: querySchema.default({ language: 'kuery', query: '' }), filters: z.array(z.record(z.string(), z.any())).max(100).default([]),
   branding: brandingSchema, sources: z.array(snapshotSchema).max(100), sections: z.array(sectionSchema).min(1).max(100)
 }).strict();
 export type ReportInput = z.infer<typeof reportSchema>;
