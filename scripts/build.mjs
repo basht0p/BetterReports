@@ -1,9 +1,9 @@
 import { build } from 'esbuild';
-import { cp, mkdir, readFile, writeFile, readdir } from 'node:fs/promises';
+import { cp, mkdir, readFile, writeFile, readdir, stat } from 'node:fs/promises';
 import { createWriteStream } from 'node:fs';
 import { resolve, join, relative } from 'node:path';
 import { createHash } from 'node:crypto';
-import archiver from 'archiver';
+import yazl from 'yazl';
 
 const root = process.cwd(), stage = resolve(root, 'build/opensearch-dashboards/betterReports');
 const manifest = JSON.parse(await readFile('package.json', 'utf8'));
@@ -37,12 +37,16 @@ for (const [path, pkg] of Object.entries(lock.packages)) {
   try { await cp(resolve(root, path), join(stage, path), { recursive: true, filter: file => !file.endsWith('.map') }); }
   catch (error) { if (!pkg.optional || error.code !== 'ENOENT') throw error; }
 }
-const zipPath = resolve(root, 'build/betterReports-3.9.0.zip');
+const zipName = `betterReports-${manifest.version}.zip`, zipPath = resolve(root, 'build', zipName);
+async function files(dir) { const items = (await readdir(dir, { withFileTypes: true })).sort((a, b) => a.name < b.name ? -1 : 1); return (await Promise.all(items.map(async item => { const path = join(dir, item.name); return (await stat(path)).isDirectory() ? files(path) : [path]; }))).flat(); }
+const staged = await files(stage);
 await new Promise((resolvePromise, reject) => {
-  const output = createWriteStream(zipPath), archive = archiver('zip', { zlib: { level: 9 } });
+  const output = createWriteStream(zipPath), archive = new yazl.ZipFile();
   output.on('close', resolvePromise); output.on('error', reject); archive.on('error', reject);
-  archive.pipe(output); archive.directory(stage, 'opensearch-dashboards/betterReports'); void archive.finalize();
+  archive.outputStream.pipe(output);
+  for (const file of staged) archive.addFile(file, `opensearch-dashboards/betterReports/${relative(stage, file).replaceAll('\\', '/')}`, { compressionLevel: 9 });
+  archive.end();
 });
 const checksum = createHash('sha256').update(await readFile(zipPath)).digest('hex');
-await writeFile(`${zipPath}.sha256`, `${checksum}  betterReports-3.9.0.zip\n`);
+await writeFile(`${zipPath}.sha256`, `${checksum}  ${zipName}\n`);
 console.log(`Built ${relative(root, zipPath)}\nSHA-256 ${checksum}`);

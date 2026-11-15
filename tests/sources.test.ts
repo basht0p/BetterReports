@@ -36,3 +36,12 @@ test('source import resolves dashboard references and inherited saved searches',
   objects['visualization:v'].attributes.title = 'Changed title';
   assert.equal(imported[0].source?.title, 'Traffic'); assert.equal((await service.import('dashboard', 'd'))[0].source?.title, 'Changed title');
 });
+test('oversized arrays are rejected without one issue per element (GHSA-mrhx-c7xc-m3w5)', () => {
+  const { id, owner, tenant, revision, schemaVersion, updatedAt, ...input } = report;
+  const flood = Array.from({ length: 200000 }, () => ({ kind: 'unknown' }));
+  for (const field of ['sections', 'sources', 'filters']) {
+    const result = reportSchema.safeParse({ ...input, [field]: flood });
+    assert.equal(result.success, false);
+    assert.ok(result.error!.issues.length <= 5, `${field}: ${result.error!.issues.length} issues`);
+  }
+});

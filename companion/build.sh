@@ -10,4 +10,4 @@ cp /work/companion/plugin-descriptor.properties /work/companion/build/
 cp /work/companion/roles.json /work/companion/build/roles.json
 cp /work/LICENSE /work/companion/build/LICENSE
 cp /work/NOTICE /work/companion/build/NOTICE
-jdk/bin/jar --create --file /work/build/betterreports-opensearch-3.9.0.zip -C /work/companion/build betterreports.jar -C /work/companion/build common-utils-3.9.0.0.jar -C /work/companion/build kotlin-stdlib-2.2.20.jar -C /work/companion/build plugin-descriptor.properties -C /work/companion/build LICENSE -C /work/companion/build NOTICE -C /work/companion/build roles.json
+jdk/bin/jar --create --file /work/build/betterreports-opensearch-${BETTER_REPORTS_VERSION:?}.zip -C /work/companion/build betterreports.jar -C /work/companion/build common-utils-3.9.0.0.jar -C /work/companion/build kotlin-stdlib-2.2.20.jar -C /work/companion/build plugin-descriptor.properties -C /work/companion/build LICENSE -C /work/companion/build NOTICE -C /work/companion/build roles.json
