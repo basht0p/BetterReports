@@ -1,11 +1,11 @@
 {
   "name": "better-reports",
-  "version": "3.9.0.1",
+  "version": "3.10.0",
   "private": true,
-  "description": "Vector PDF reports and scheduled email for OpenSearch Dashboards 3.9.0",
+  "description": "Vector PDF reports and scheduled email for OpenSearch Dashboards 3.10.0",
   "license": "Apache-2.0",
   "opensearchDashboards": {
-    "version": "3.9.0"
+    "version": "3.10.0"
   },
   "scripts": {
     "test": "node scripts/test.mjs",

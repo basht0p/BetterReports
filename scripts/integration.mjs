@@ -117,7 +117,7 @@ assert.equal(createHash('sha256').update(pdf).digest('hex'), artifact.sha256);
 async function textOf(bytes) { const doc = await getDocument({ data: new Uint8Array(bytes), isEvalSupported: false }).promise; let text = ''; for (let i = 1; i <= doc.numPages; i++) { const page = await doc.getPage(i); assert.deepEqual(page.view, [0, 0, 612, 792]); text += (await page.getTextContent()).items.map(item => item.str).join(' '); } await doc.destroy(); return text.replace(/\s+/g, ' '); }
 assert.match(await textOf(pdf), /Count 12/);
 await assert.rejects(api(`/runs/${finished.id}/pdf?encoding=base64`, 'GET', undefined, 'report_other'), error => error.status === 404);
-// Exercise every supported visual type and aggregation through real 3.9.0 services.
+// Exercise every supported visual type and aggregation through real 3.10.0 services.
 const metric = (type, i) => ({ id: String(i), enabled: true, type, schema: 'metric', params: type === 'count' ? {} : type === 'cardinality' ? { field: 'environment' } : type === 'percentiles' ? { field: 'bytes', percents: [50, 95] } : { field: 'bytes' } });
 const bucket = (type, params) => ({ id: 'b', enabled: true, type, schema: 'segment', params });
 const cases = [
@@ -139,7 +139,7 @@ for (const [type, aggs] of cases) {
   const id = `br-fixture-${type}`; visualRefs.push({ type: 'visualization', id, name: `panel_${type}` });
   await so('visualization', id, { attributes: { title: `${type} fixture`, visState: JSON.stringify({ type, params: { addLegend: true, isDonut: type === 'pie' }, aggs }), kibanaSavedObjectMeta: { searchSourceJSON: JSON.stringify({ indexRefName: 'index', query: { language: 'kuery', query: '' }, filter: [] }) } }, references: [{ type: 'index-pattern', id: 'br-fixture-index', name: 'index' }] });
 }
-await so('dashboard', 'br-fixture-dashboard', { attributes: { title: 'BetterReports fixtures', panelsJSON: JSON.stringify(visualRefs.map((ref, i) => ({ panelIndex: String(i), panelRefName: ref.name, type: 'visualization', version: '3.9.0', gridData: { x: (i % 2) * 24, y: Math.floor(i / 2) * 15, w: 24, h: 15, i: String(i) }, embeddableConfig: {} }))), kibanaSavedObjectMeta: { searchSourceJSON: JSON.stringify({ query: { language: 'kuery', query: 'bytes >= 0' }, filter: [] }) } }, references: visualRefs });
+await so('dashboard', 'br-fixture-dashboard', { attributes: { title: 'BetterReports fixtures', panelsJSON: JSON.stringify(visualRefs.map((ref, i) => ({ panelIndex: String(i), panelRefName: ref.name, type: 'visualization', version: '3.10.0', gridData: { x: (i % 2) * 24, y: Math.floor(i / 2) * 15, w: 24, h: 15, i: String(i) }, embeddableConfig: {} }))), kibanaSavedObjectMeta: { searchSourceJSON: JSON.stringify({ query: { language: 'kuery', query: 'bytes >= 0' }, filter: [] }) } }, references: visualRefs });
 const panels = await api('/sources/import', 'POST', { type: 'dashboard', id: 'br-fixture-dashboard' });
 assert.ok(panels.every(panel => panel.source), JSON.stringify(panels));
 const { id, owner, tenant, revision, schemaVersion, updatedAt, ...definition } = report;
@@ -155,7 +155,7 @@ await so('search', 'br-fixture-search', { attributes: { title: 'Large production
 assert.ok((await api('/sources?search=Large')).sources.some(item => item.type === 'search' && item.id === 'br-fixture-search'), 'Saved searches are discoverable');
 const [savedSearch] = await api('/sources/import', 'POST', { type: 'search', id: 'br-fixture-search' }); assert.ok(savedSearch.source, JSON.stringify(savedSearch));
 assert.deepEqual(savedSearch.source.vis.params, { columns: ['@timestamp', 'environment', 'bytes'], sort: [['bytes', 'desc']], rowLimit: 1000 });
-await so('dashboard', 'br-fixture-search-dashboard', { attributes: { title: 'Saved search dashboard', panelsJSON: JSON.stringify([{ panelIndex: 'search-panel', panelRefName: 'panel_0', type: 'search', version: '3.9.0', gridData: { x: 0, y: 0, w: 48, h: 15, i: 'search-panel' }, embeddableConfig: {} }]), kibanaSavedObjectMeta: { searchSourceJSON: JSON.stringify({ query: { language: 'kuery', query: '' }, filter: [] }) } }, references: [{ type: 'search', id: 'br-fixture-search', name: 'panel_0' }] });
+await so('dashboard', 'br-fixture-search-dashboard', { attributes: { title: 'Saved search dashboard', panelsJSON: JSON.stringify([{ panelIndex: 'search-panel', panelRefName: 'panel_0', type: 'search', version: '3.10.0', gridData: { x: 0, y: 0, w: 48, h: 15, i: 'search-panel' }, embeddableConfig: {} }]), kibanaSavedObjectMeta: { searchSourceJSON: JSON.stringify({ query: { language: 'kuery', query: '' }, filter: [] }) } }, references: [{ type: 'search', id: 'br-fixture-search', name: 'panel_0' }] });
 const [dashboardSearch] = await api('/sources/import', 'POST', { type: 'dashboard', id: 'br-fixture-search-dashboard' }); assert.equal(dashboardSearch.source?.type, 'search', JSON.stringify(dashboardSearch));
 const limitedSearch = { ...savedSearch.source, key: 'limited-search', title: 'Top five requests', vis: { ...savedSearch.source.vis, params: { ...savedSearch.source.vis.params, rowLimit: 5 } } };
 const searchSections = (...keys) => keys.map(key => ({ id: `section-${key}`, kind: 'panels', columns: 1, sources: [key] }));
@@ -296,5 +296,5 @@ try {
 } finally {
   await put('rolesmapping/betterreports_scope_writer_fixture', { users: [] });
 }
-await writeFile('output/integration/results.json', JSON.stringify({ platform: '3.9.0', senderId: sender.config_id, recipientGroupIds: [group.config_id], distributedWorkers, reportId: report.id, runId: finished.id, pagesExpected: 1, sha256: artifact.sha256, scheduledEmails: mail.count - baselineMailCount, allTypesRunId: allRun.id, dlsCount: 12, pinnedFreshCount: 13, refreshedSum: 7800, checkedAt: new Date().toISOString() }, null, 2));
-console.log('PASS: 3.9.0 installation, source import, PDF generation, owner/tenant isolation, artifact authorization, and scheduled Notifications PDF email. Evidence: output/integration/.');
+await writeFile('output/integration/results.json', JSON.stringify({ platform: '3.10.0', senderId: sender.config_id, recipientGroupIds: [group.config_id], distributedWorkers, reportId: report.id, runId: finished.id, pagesExpected: 1, sha256: artifact.sha256, scheduledEmails: mail.count - baselineMailCount, allTypesRunId: allRun.id, dlsCount: 12, pinnedFreshCount: 13, refreshedSum: 7800, checkedAt: new Date().toISOString() }, null, 2));
+console.log('PASS: 3.10.0 installation, source import, PDF generation, owner/tenant isolation, artifact authorization, and scheduled Notifications PDF email. Evidence: output/integration/.');
