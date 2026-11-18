@@ -4,13 +4,13 @@
 
 `npm test` covers date math, timezone validation, DST gaps/repeats, missed-run coalescing, supported/unsupported sources, inherited searches, owner/tenant isolation, revision snapshots, competing workers, email ambiguity, retry date stability, cancellation fencing, revoked access, 100-schedule queue admission, rendering concurrency, Letter dimensions, embedded fonts, absence of screenshot images, chart values, and PDF limits.
 
-`npm run typecheck` checks the application and domain code. Platform entrypoints use a deliberately isolated runtime adapter, so this command is not a substitute for the 3.9.0 deployment test.
+`npm run typecheck` checks the application and domain code. Platform entrypoints use a deliberately isolated runtime adapter, so this command is not a substitute for the 3.10.0 deployment test.
 
 `npm run check:platform` checks the exact source signatures and asset-loader conventions used by the adapter and packager. It is a source-contract check, not a full monorepo typecheck.
 
 `npm run demo` generates a multi-page synthetic report for visual inspection. Render every page to an image and review headers, footers, table repetition, fonts, charts, margins, and overflow. Production acceptance also requires representative real dashboard fixtures.
 
-## Isolated 3.9.0 environment
+## Isolated 3.10.0 environment
 
 The Docker files under `dev/` and scripts `dev-up.mjs` and `integration.mjs` provide a loopback-only local fixture deployment. They create test identities, data, and saved objects on that disposable cluster. They must never be pointed at a production cluster. See the scripts for the fixed local ports and resource names.
 
@@ -89,3 +89,11 @@ Fixture fixes in this release:
 The 3.9.0.1 release passed 54 unit tests and TypeScript checks, and `npm audit` reports no known vulnerabilities for the lockfile. A new unit test sends 200,000-element arrays to the report schema and requires at most a handful of validation issues. Both plugin ZIPs were built, and both release Dockerfiles installed them on the official 3.9.0 images, where the plugins report version 3.9.0.1. The Dashboards ZIP written by the new packager was extracted and compared with the staged build directory; the contents were identical.
 
 `npm run test:integration` passed against the official `opensearchproject/opensearch:3.9.0` and `opensearchproject/opensearch-dashboards:3.9.0` images. A live 2.4 MB report body with 150,000 sections returned HTTP 400 with a single `sections` issue in under half a second. The companion, SAML, two-instance, FLS, load, and Notifications suites were not repeated; the companion's code is unchanged and the Dashboards change is limited to the validation library.
+
+## 3.10.0 platform validation
+
+The 3.10.0 compatibility release passed 54 unit tests, TypeScript checks, and all 27 source contracts against the OpenSearch Dashboards `3.10.0` tag (`73911ce8`). `npm audit` reports no known vulnerabilities for the lockfile. Between 3.9.0 and 3.10.0, the Dashboards changes in the code paths the adapter uses are additive: `IndexPatternsService.get` now refreshes fields when the time field is missing (BetterReports builds patterns from snapshots with `create`, which is unchanged), data-source references are matched by name or type, and search source gained partial-result polling and a PPL-only `fetchSize`. The companion compiles without source changes against the official 3.10.0 OpenSearch, Security, and Notifications jars (`common-utils` 3.10.0.0, JDK 25.0.5).
+
+The live suites passed on the official `opensearchproject/opensearch:3.10.0` and `opensearchproject/opensearch-dashboards:3.10.0` images: `test:integration`, `test:companion -- --restart`, `test:saml`, `fls-test.mjs`, and `notifications-integration.mjs`. A browser check confirmed that the app loads and renders on 3.10.0. Both release Dockerfiles built from the digest-pinned base images, and the installed plugins report version 3.10.0. The two-instance `--multi` run and `load-test.mjs` were not repeated, and an in-place upgrade from a 3.9.0 deployment with existing data was not exercised.
+
+The pulled 3.10.0 images were checked against the advisory review that prompted this release: Dashboards bundles Node.js 22.23.4 and `@hapi/content` 6.0.3, OpenSearch bundles Temurin JDK 25.0.5+8, and `express`, `body-parser`, and `proxy-addr` are not present in the Dashboards runtime image. The `qs` and `dompurify` versions are compiled into Dashboards bundles and were not confirmed from the image. Base image operating-system packages were not scanned.

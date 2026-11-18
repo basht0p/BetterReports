@@ -110,7 +110,7 @@ export function assertTenantAccess(authInfo: any, tenant: string, write = false)
 }
 
 // All platform-specific calls live here. Contract paths are verified by
-// npm run check:platform against upstream tag 3.9.0 (def668b5).
+// npm run check:platform against upstream tag 3.10.0 (73911ce8).
 export class PlatformAdapter {
   readonly grants: GrantClient;
   constructor(private core: any, private data: any, worker: { username: string; password: string }, private limits: Limits) { this.grants = new GrantClient(core, worker); }

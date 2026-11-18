@@ -3,7 +3,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { resolve } from 'node:path';
 const { version } = JSON.parse(await readFile('package.json', 'utf8'));
-const result = spawnSync('docker', ['run', '--rm', '--user', '0', '--entrypoint', 'bash', '-e', `BETTER_REPORTS_VERSION=${version}`, '-v', `${resolve('.')}:/work`, 'opensearchproject/opensearch:3.9.0', '/work/companion/build.sh'], { stdio: 'inherit' });
+const result = spawnSync('docker', ['run', '--rm', '--user', '0', '--entrypoint', 'bash', '-e', `BETTER_REPORTS_VERSION=${version}`, '-v', `${resolve('.')}:/work`, 'opensearchproject/opensearch:3.10.0', '/work/companion/build.sh'], { stdio: 'inherit' });
 process.exitCode = result.status ?? 1;
 
 if (result.status === 0) {
